@@ -53,6 +53,7 @@ async function initializeSchema(client: Client) {
         updated_at TEXT NOT NULL
       )`,
       `CREATE INDEX IF NOT EXISTS idx_users_birthday ON users (birthday)`,
+      `CREATE INDEX IF NOT EXISTS idx_users_birthday_md ON users (substr(birthday, 6, 5))`,
       `CREATE INDEX IF NOT EXISTS idx_users_created ON users (created_at)`,
       `CREATE TABLE IF NOT EXISTS blessings (
         id TEXT PRIMARY KEY,

@@ -84,6 +84,8 @@ npm run dev      # 开发服务器
 npm run build    # 生产构建（含类型检查）
 npm run start    # 启动已构建的生产服务
 npm run seed     # 载入本地演示数据
+npm run backup   # 备份数据库到 backups/
+npm run restore -- <备份文件.json> --force  # 从备份恢复
 ```
 
 ## 核心规则
@@ -98,6 +100,31 @@ npm run seed     # 载入本地演示数据
 - 游客可以浏览首页，但送蛋糕、切蛋糕与编辑资料必须登录。
 
 完整产品规则与验收条件见 [需求文档](docs/需求文档.md)。
+
+## 维护与备份
+
+长期维护、备份恢复、故障排查和额度说明：
+
+- [维护手册](docs/维护手册.md)
+- [用量与容量说明](docs/用量与容量.md)
+
+生产数据库备份：
+
+```powershell
+# 先在 .env.local 配置 Turso URL 和 Token，或直接备份本地数据库
+npm run backup
+```
+
+备份文件默认写入 `backups/`，包含用户资料、密码哈希和头像。该目录已被 `.gitignore` 排除，**不要上传到公开位置**。
+
+恢复前先在本地测试库演练：
+
+```powershell
+$env:TURSO_DATABASE_URL = "file:./data/restore-test.db"
+npm run restore -- "backups\你的备份文件.json" --force
+```
+
+生产恢复会清空目标库中的现有数据，务必先做新的备份，并确认 `.env.local` 指向正确数据库。
 
 ## 目录结构
 
@@ -116,6 +143,9 @@ scripts/
 docs/
   需求文档.md
   部署指南.md
+  Netlify部署指南.md
+  维护手册.md
+  用量与容量.md
   screenshots/
 ```
 

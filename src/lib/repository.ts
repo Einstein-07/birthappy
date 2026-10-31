@@ -104,6 +104,14 @@ export async function getTodayBirthdayPeople(
   today: Today
 ): Promise<BirthdayPerson[]> {
   const db = await getDatabase();
+  const monthDays = [today.monthDay];
+
+  // 2 月 29 日出生的人，在非闰年的 2 月 28 日一起庆祝。
+  if (today.monthDay === "02-28" && !today.isLeapYear) {
+    monthDays.push("02-29");
+  }
+  const monthDayPlaceholders = monthDays.map(() => "?").join(", ");
+
   const result = await db.execute({
     sql: `SELECT
         u.id,
@@ -120,22 +128,13 @@ export async function getTodayBirthdayPeople(
         AND b.kind = 'wish'
         AND b.year = ?
       WHERE u.id <> ?
-        AND (
-          substr(u.birthday, 6, 5) = ?
-          OR (
-            u.birthday LIKE '%-02-29'
-            AND ? = '02-28'
-            AND ? = 0
-          )
-        )
+        AND substr(u.birthday, 6, 5) IN (${monthDayPlaceholders})
       ORDER BY u.created_at ASC, u.id ASC`,
     args: [
       viewerId ?? "",
       getYear(),
       viewerId ?? "",
-      today.monthDay,
-      today.monthDay,
-      today.isLeapYear ? 1 : 0
+      ...monthDays
     ]
   });
 

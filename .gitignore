@@ -6,6 +6,7 @@ out/
 .env.local
 .env*.local
 data/
+backups/
 .pnpm-store/
 .npm-cache/
 .visual-test/
