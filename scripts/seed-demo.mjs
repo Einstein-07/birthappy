@@ -81,6 +81,7 @@ const today = todayParts();
 const toIso = (monthDay, fallbackYear) =>
   `${fallbackYear}-${monthDay}`;
 const currentYear = today.year;
+const currentMonth = `${today.year}-${today.month}`;
 const now = new Date().toISOString();
 const previousYearDate = new Date(
   Date.UTC(currentYear - 1, 5, 12, 10, 0, 0)
@@ -179,7 +180,15 @@ await db.batch(
       share_count INTEGER NOT NULL,
       created_at TEXT NOT NULL
     )`,
-    `CREATE INDEX IF NOT EXISTS idx_cake_cuts_user ON cake_cuts (user_id, created_at)`
+    `CREATE INDEX IF NOT EXISTS idx_cake_cuts_user ON cake_cuts (user_id, created_at)`,
+    `CREATE TABLE IF NOT EXISTS change_quotas (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('profile', 'birthday')),
+      period TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, kind, period)
+    )`
   ],
   "write"
 );
@@ -197,6 +206,10 @@ await db.batch(
     {
       sql: `DELETE FROM blessings WHERE sender_id IN (${placeholders}) OR recipient_id IN (${placeholders})`,
       args: [...ids, ...ids]
+    },
+    {
+      sql: `DELETE FROM change_quotas WHERE user_id IN (${placeholders})`,
+      args: ids
     }
   ],
   "write"
@@ -240,6 +253,23 @@ for (const user of users) {
       now
     ]
   });
+
+  // 注册本身计为当月第 1 次资料修改；生日初始不消耗修改次数。
+  await db.batch(
+    [
+      {
+        sql: `INSERT INTO change_quotas (user_id, kind, period, used, updated_at)
+          VALUES (?, 'profile', ?, 1, ?)`,
+        args: [user.id, currentMonth, now]
+      },
+      {
+        sql: `INSERT INTO change_quotas (user_id, kind, period, used, updated_at)
+          VALUES (?, 'birthday', 'lifetime', 0, ?)`,
+        args: [user.id, now]
+      }
+    ],
+    "write"
+  );
 }
 
 const blessingRows = [

@@ -8,7 +8,9 @@ export function SiteFooter() {
           把一块蛋糕，送给今天的主角。
         </p>
         <p className="site-footer__meta">
-          BirtHappy © {year} <span aria-hidden="true">·</span> 以北京时间迎接每一个生日
+          © {year} 绛河 <span aria-hidden="true">·</span> BirtHappy
+          <span aria-hidden="true"> · </span>
+          以北京时间迎接每一个生日
         </p>
       </div>
     </footer>

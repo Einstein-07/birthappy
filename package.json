@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "用一块蛋糕，记住今天过生日的人。",
+  "author": "绛河",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

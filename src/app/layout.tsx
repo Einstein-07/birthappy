@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   description:
     "BirtHappy 只展示今天过生日的人。送一块蛋糕，让被记住这件事轻一点，也暖一点。",
   applicationName: "BirtHappy",
+  authors: [{ name: "绛河" }],
+  creator: "绛河",
   keywords: ["生日", "祝福", "蛋糕", "BirtHappy"],
   openGraph: {
     title: "BirtHappy｜把一块蛋糕，送给今天的主角",

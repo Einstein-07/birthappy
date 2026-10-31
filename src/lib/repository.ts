@@ -1,12 +1,49 @@
-import type { Row } from "@libsql/client";
+import type { Client, Row, Transaction } from "@libsql/client";
 import { getDatabase } from "@/lib/db";
-import { getYear, type Today } from "@/lib/birthday";
+import { getMonthKey, getYear, type Today } from "@/lib/birthday";
 import type {
   BlessingStats,
   BirthdayPerson,
+  ChangeQuotaState,
+  ProfileSaveResult,
   User,
   YearBlessingStat
 } from "@/lib/types";
+
+export const PROFILE_CHANGE_LIMIT = 3;
+export const BIRTHDAY_CHANGE_LIMIT = 3;
+const BIRTHDAY_PERIOD = "lifetime";
+
+type SqlExecutor = Client | Transaction;
+
+export type AvatarChange =
+  | { action: "keep" }
+  | { action: "remove" }
+  | { action: "replace"; bytes: Uint8Array; mime: string };
+
+export class ProfileChangeError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly fields?: Record<string, string>;
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    options: {
+      status: number;
+      code: string;
+      fields?: Record<string, string>;
+      details?: Record<string, unknown>;
+    }
+  ) {
+    super(message);
+    this.name = "ProfileChangeError";
+    this.status = options.status;
+    this.code = options.code;
+    this.fields = options.fields;
+    this.details = options.details;
+  }
+}
 
 const USER_COLUMNS = `
   id,
@@ -34,13 +71,111 @@ function toUser(row: Row): User {
   };
 }
 
-export async function getUserById(id: string): Promise<User | null> {
-  const db = await getDatabase();
-  const result = await db.execute({
+async function findUserById(
+  executor: SqlExecutor,
+  id: string
+): Promise<User | null> {
+  const result = await executor.execute({
     sql: `SELECT ${USER_COLUMNS} FROM users WHERE id = ? LIMIT 1`,
     args: [id]
   });
   return result.rows[0] ? toUser(result.rows[0]) : null;
+}
+
+export async function getUserById(id: string): Promise<User | null> {
+  const db = await getDatabase();
+  return findUserById(db, id);
+}
+
+function initialProfileUsage(createdAt: string, monthKey: string) {
+  return getMonthKey(new Date(createdAt)) === monthKey ? 1 : 0;
+}
+
+async function ensureQuotaRows(
+  executor: SqlExecutor,
+  user: User,
+  monthKey: string,
+  nowIso: string
+) {
+  await executor.execute({
+    sql: `INSERT OR IGNORE INTO change_quotas
+      (user_id, kind, period, used, updated_at)
+      VALUES (?, 'profile', ?, ?, ?)`,
+    args: [
+      user.id,
+      monthKey,
+      initialProfileUsage(user.createdAt, monthKey),
+      nowIso
+    ]
+  });
+  await executor.execute({
+    sql: `INSERT OR IGNORE INTO change_quotas
+      (user_id, kind, period, used, updated_at)
+      VALUES (?, 'birthday', 'lifetime', 0, ?)`,
+    args: [user.id, nowIso]
+  });
+}
+
+async function readQuotaState(
+  executor: SqlExecutor,
+  userId: string,
+  monthKey: string
+): Promise<ChangeQuotaState> {
+  const result = await executor.execute({
+    sql: `SELECT kind, used
+      FROM change_quotas
+      WHERE user_id = ?
+        AND (
+          (kind = 'profile' AND period = ?)
+          OR (kind = 'birthday' AND period = 'lifetime')
+        )`,
+    args: [userId, monthKey]
+  });
+
+  let profileUsed = 0;
+  let birthdayUsed = 0;
+  for (const row of result.rows) {
+    if (row.kind === "profile") profileUsed = Number(row.used);
+    if (row.kind === "birthday") birthdayUsed = Number(row.used);
+  }
+
+  return {
+    profile: {
+      used: profileUsed,
+      remaining: Math.max(0, PROFILE_CHANGE_LIMIT - profileUsed),
+      limit: PROFILE_CHANGE_LIMIT,
+      period: monthKey
+    },
+    birthday: {
+      used: birthdayUsed,
+      remaining: Math.max(0, BIRTHDAY_CHANGE_LIMIT - birthdayUsed),
+      limit: BIRTHDAY_CHANGE_LIMIT
+    }
+  };
+}
+
+export async function getChangeQuotaState(
+  user: User
+): Promise<ChangeQuotaState> {
+  const db = await getDatabase();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const monthKey = getMonthKey(now);
+  await ensureQuotaRows(db, user, monthKey, nowIso);
+  return readQuotaState(db, user.id, monthKey);
+}
+
+async function countReceivedWishes(
+  executor: SqlExecutor,
+  userId: string
+) {
+  const result = await executor.execute({
+    sql: `SELECT COUNT(*) AS count
+      FROM blessings
+      WHERE recipient_id = ? AND kind = 'wish'`,
+    args: [userId]
+  });
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function getUserByAccount(account: string): Promise<
@@ -77,22 +212,43 @@ export async function createUser(input: {
   isAnonymous?: boolean;
 }): Promise<User> {
   const db = await getDatabase();
-  const now = new Date().toISOString();
-  await db.execute({
-    sql: `INSERT INTO users
-      (id, account, password_hash, name, bio, birthday, is_anonymous, created_at, updated_at)
-      VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-    args: [
-      input.id,
-      input.account,
-      input.passwordHash,
-      input.name,
-      input.birthday,
-      input.isAnonymous ? 1 : 0,
-      now,
-      now
-    ]
-  });
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const monthKey = getMonthKey(now);
+
+  await db.batch(
+    [
+      {
+        sql: `INSERT INTO users
+          (id, account, password_hash, name, bio, birthday, is_anonymous, created_at, updated_at)
+          VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
+        args: [
+          input.id,
+          input.account,
+          input.passwordHash,
+          input.name,
+          input.birthday,
+          input.isAnonymous ? 1 : 0,
+          nowIso,
+          nowIso
+        ]
+      },
+      {
+        // 注册本身计为当月第 1 次资料修改。
+        sql: `INSERT INTO change_quotas
+          (user_id, kind, period, used, updated_at)
+          VALUES (?, 'profile', ?, 1, ?)`,
+        args: [input.id, monthKey, nowIso]
+      },
+      {
+        sql: `INSERT INTO change_quotas
+          (user_id, kind, period, used, updated_at)
+          VALUES (?, 'birthday', 'lifetime', 0, ?)`,
+        args: [input.id, nowIso]
+      }
+    ],
+    "write"
+  );
 
   const user = await getUserById(input.id);
   if (!user) throw new Error("创建账号后未能读取用户资料");
@@ -149,50 +305,253 @@ export async function getTodayBirthdayPeople(
   }));
 }
 
-export async function updateUserProfile(
+function profileChangedFor(user: User, input: {
+  name: string;
+  bio: string;
+  avatar: AvatarChange;
+}) {
+  return (
+    user.name !== input.name ||
+    user.bio !== input.bio ||
+    input.avatar.action === "replace" ||
+    (input.avatar.action === "remove" && user.hasAvatar)
+  );
+}
+
+function profileLimitError(quota: ChangeQuotaState) {
+  return new ProfileChangeError(
+    "本月头像、称呼和简介的 3 次修改机会已用完，下月 1 日恢复。",
+    {
+      status: 429,
+      code: "PROFILE_MONTHLY_LIMIT_REACHED",
+      fields: {
+        profile: "本月资料修改次数已用完"
+      },
+      details: { quota }
+    }
+  );
+}
+
+function birthdayLimitError(quota: ChangeQuotaState) {
+  return new ProfileChangeError(
+    "这个账号的 3 次生日修改机会已经全部用完，生日不能再修改。",
+    {
+      status: 429,
+      code: "BIRTHDAY_LIMIT_REACHED",
+      fields: {
+        birthday: "生日修改次数已用完"
+      },
+      details: { quota }
+    }
+  );
+}
+
+export async function saveUserProfile(
   userId: string,
   input: {
     name: string;
     bio: string;
     birthday: string;
     isAnonymous: boolean;
+    avatar: AvatarChange;
   },
-  avatar:
-    | { action: "keep" }
-    | { action: "remove" }
-    | { action: "replace"; bytes: Uint8Array; mime: string }
-): Promise<User | null> {
+  confirmBirthdayReset: boolean
+): Promise<ProfileSaveResult> {
   const db = await getDatabase();
-  const now = new Date().toISOString();
-  const columns = [
-    "name = ?",
-    "bio = ?",
-    "birthday = ?",
-    "is_anonymous = ?",
-    "updated_at = ?"
-  ];
-  const args: (string | number | Uint8Array | null)[] = [
-    input.name,
-    input.bio,
-    input.birthday,
-    input.isAnonymous ? 1 : 0,
-    now
-  ];
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const monthKey = getMonthKey(now);
 
-  if (avatar.action === "replace") {
-    columns.push("avatar = ?", "avatar_mime = ?");
-    args.push(avatar.bytes, avatar.mime);
-  } else if (avatar.action === "remove") {
-    columns.push("avatar = NULL", "avatar_mime = NULL");
+  const current = await findUserById(db, userId);
+  if (!current) {
+    throw new ProfileChangeError("没有找到你的资料", {
+      status: 404,
+      code: "USER_NOT_FOUND"
+    });
   }
 
-  args.push(userId);
-  await db.execute({
-    sql: `UPDATE users SET ${columns.join(", ")} WHERE id = ?`,
-    args
-  });
+  const quotaBefore = await getChangeQuotaState(current);
+  const initialProfileChanged = profileChangedFor(current, input);
+  const initialBirthdayChanged = current.birthday !== input.birthday;
+  const initialAnonymousChanged = current.isAnonymous !== input.isAnonymous;
 
-  return getUserById(userId);
+  if (
+    !initialProfileChanged &&
+    !initialBirthdayChanged &&
+    !initialAnonymousChanged
+  ) {
+    return {
+      user: current,
+      quota: quotaBefore,
+      profileChanged: false,
+      birthdayChanged: false,
+      removedWishCount: 0
+    };
+  }
+
+  if (initialProfileChanged && quotaBefore.profile.remaining <= 0) {
+    throw profileLimitError(quotaBefore);
+  }
+  if (initialBirthdayChanged && quotaBefore.birthday.remaining <= 0) {
+    throw birthdayLimitError(quotaBefore);
+  }
+  if (initialBirthdayChanged && !confirmBirthdayReset) {
+    const removedWishCount = await countReceivedWishes(db, userId);
+    throw new ProfileChangeError(
+      "修改生日会清空已收到的生日祝福，请确认后再保存。",
+      {
+        status: 409,
+        code: "BIRTHDAY_CONFIRMATION_REQUIRED",
+        details: {
+          quota: quotaBefore,
+          oldBirthday: current.birthday,
+          newBirthday: input.birthday,
+          removedWishCount
+        }
+      }
+    );
+  }
+
+  const transaction = await db.transaction("write");
+  try {
+    const latest = await findUserById(transaction, userId);
+    if (!latest) {
+      throw new ProfileChangeError("没有找到你的资料", {
+        status: 404,
+        code: "USER_NOT_FOUND"
+      });
+    }
+
+    await ensureQuotaRows(transaction, latest, monthKey, nowIso);
+    let quota = await readQuotaState(transaction, userId, monthKey);
+
+    const profileChanged = profileChangedFor(latest, input);
+    const birthdayChanged = latest.birthday !== input.birthday;
+    const anonymousChanged = latest.isAnonymous !== input.isAnonymous;
+
+    if (profileChanged && quota.profile.remaining <= 0) {
+      throw profileLimitError(quota);
+    }
+    if (birthdayChanged && quota.birthday.remaining <= 0) {
+      throw birthdayLimitError(quota);
+    }
+    if (birthdayChanged && !confirmBirthdayReset) {
+      const removedWishCount = await countReceivedWishes(
+        transaction,
+        userId
+      );
+      throw new ProfileChangeError(
+        "修改生日会清空已收到的生日祝福，请确认后再保存。",
+        {
+          status: 409,
+          code: "BIRTHDAY_CONFIRMATION_REQUIRED",
+          details: {
+            quota,
+            oldBirthday: latest.birthday,
+            newBirthday: input.birthday,
+            removedWishCount
+          }
+        }
+      );
+    }
+
+    const removedWishCount = birthdayChanged
+      ? await countReceivedWishes(transaction, userId)
+      : 0;
+
+    if (profileChanged) {
+      const reserved = await transaction.execute({
+        sql: `UPDATE change_quotas
+          SET used = used + 1, updated_at = ?
+          WHERE user_id = ? AND kind = 'profile' AND period = ? AND used < ?`,
+        args: [nowIso, userId, monthKey, PROFILE_CHANGE_LIMIT]
+      });
+      if (Number(reserved.rowsAffected) === 0) {
+        throw profileLimitError(quota);
+      }
+    }
+
+    if (birthdayChanged) {
+      const reserved = await transaction.execute({
+        sql: `UPDATE change_quotas
+          SET used = used + 1, updated_at = ?
+          WHERE user_id = ? AND kind = 'birthday' AND period = 'lifetime' AND used < ?`,
+        args: [nowIso, userId, BIRTHDAY_CHANGE_LIMIT]
+      });
+      if (Number(reserved.rowsAffected) === 0) {
+        throw birthdayLimitError(quota);
+      }
+    }
+
+    if (profileChanged || birthdayChanged || anonymousChanged) {
+      const columns = [
+        "name = ?",
+        "bio = ?",
+        "birthday = ?",
+        "is_anonymous = ?",
+        "updated_at = ?"
+      ];
+      const args: (string | number | Uint8Array | null)[] = [
+        input.name,
+        input.bio,
+        input.birthday,
+        input.isAnonymous ? 1 : 0,
+        nowIso
+      ];
+
+      if (input.avatar.action === "replace") {
+        columns.push("avatar = ?", "avatar_mime = ?");
+        args.push(input.avatar.bytes, input.avatar.mime);
+      } else if (input.avatar.action === "remove") {
+        columns.push("avatar = NULL", "avatar_mime = NULL");
+      }
+
+      args.push(userId);
+      await transaction.execute({
+        sql: `UPDATE users SET ${columns.join(", ")} WHERE id = ?`,
+        args
+      });
+    }
+
+    if (birthdayChanged) {
+      await transaction.execute({
+        sql: `DELETE FROM blessings
+          WHERE recipient_id = ? AND kind = 'wish'`,
+        args: [userId]
+      });
+    }
+
+    quota = await readQuotaState(transaction, userId, monthKey);
+    await transaction.commit();
+
+    const updatedUser: User = {
+      ...latest,
+      name: input.name,
+      bio: input.bio,
+      birthday: input.birthday,
+      isAnonymous: input.isAnonymous,
+      hasAvatar:
+        input.avatar.action === "remove"
+          ? false
+          : input.avatar.action === "replace"
+            ? true
+            : latest.hasAvatar,
+      updatedAt: nowIso
+    };
+
+    return {
+      user: updatedUser,
+      quota,
+      profileChanged,
+      birthdayChanged,
+      removedWishCount
+    };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  } finally {
+    transaction.close();
+  }
 }
 
 export async function getAvatar(

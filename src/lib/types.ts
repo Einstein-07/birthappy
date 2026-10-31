@@ -36,4 +36,26 @@ export type BlessingStats = {
   years: YearBlessingStat[];
 };
 
+export type ChangeQuotaState = {
+  profile: {
+    used: number;
+    remaining: number;
+    limit: number;
+    period: string;
+  };
+  birthday: {
+    used: number;
+    remaining: number;
+    limit: number;
+  };
+};
+
+export type ProfileSaveResult = {
+  user: User;
+  quota: ChangeQuotaState;
+  profileChanged: boolean;
+  birthdayChanged: boolean;
+  removedWishCount: number;
+};
+
 export type ApiFieldErrors = Record<string, string>;

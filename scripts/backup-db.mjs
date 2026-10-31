@@ -25,8 +25,13 @@ function nowFileStamp() {
 const database = await openDatabase();
 
 try {
-  const [usersResult, blessingsResult, cutsResult, schemaResult] =
-    await Promise.all([
+  const [
+    usersResult,
+    blessingsResult,
+    cutsResult,
+    quotasResult,
+    schemaResult
+  ] = await Promise.all([
       database.client.execute(
         `SELECT id, account, password_hash, name, bio, birthday,
                 is_anonymous, avatar, avatar_mime, created_at, updated_at
@@ -44,11 +49,16 @@ try {
          ORDER BY created_at ASC, id ASC`
       ),
       database.client.execute(
+        `SELECT user_id, kind, period, used, updated_at
+         FROM change_quotas
+         ORDER BY user_id ASC, kind ASC, period ASC`
+      ),
+      database.client.execute(
         `SELECT type, name, tbl_name, sql
          FROM sqlite_master
          WHERE type IN ('table', 'index')
            AND sql IS NOT NULL
-           AND tbl_name IN ('users', 'blessings', 'cake_cuts')
+           AND tbl_name IN ('users', 'blessings', 'cake_cuts', 'change_quotas')
          ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name ASC`
       )
     ]);
@@ -85,15 +95,24 @@ try {
     created_at: row.created_at
   }));
 
+  const changeQuotas = quotasResult.rows.map((row) => ({
+    user_id: row.user_id,
+    kind: row.kind,
+    period: row.period,
+    used: row.used,
+    updated_at: row.updated_at
+  }));
+
   const payload = {
-    format: "birthappy-backup-v1",
-    schemaVersion: 1,
+    format: "birthappy-backup-v2",
+    schemaVersion: 2,
     createdAt: new Date().toISOString(),
     source: database.source,
     counts: {
       users: users.length,
       blessings: blessings.length,
-      cakeCuts: cakeCuts.length
+      cakeCuts: cakeCuts.length,
+      changeQuotas: changeQuotas.length
     },
     schema: schemaResult.rows.map((row) => ({
       type: row.type,
@@ -103,7 +122,8 @@ try {
     })),
     users,
     blessings,
-    cakeCuts
+    cakeCuts,
+    changeQuotas
   };
 
   const backupDirectory = path.join(projectRoot, "backups");
@@ -122,7 +142,7 @@ try {
   console.log("\nBirtHappy 备份完成");
   console.log(`来源：${database.source}`);
   console.log(
-    `数据：${users.length} 位用户，${blessings.length} 条祝福，${cakeCuts.length} 次切蛋糕`
+    `数据：${users.length} 位用户，${blessings.length} 条祝福，${cakeCuts.length} 次切蛋糕，${changeQuotas.length} 条修改额度`
   );
   console.log(`文件：${outputFile}`);
   console.log(`大小：${formatBytes(stats.size)}\n`);

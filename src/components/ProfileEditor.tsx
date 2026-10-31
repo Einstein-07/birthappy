@@ -2,14 +2,25 @@
 
 import { useRouter } from "next/navigation";
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type FormEvent
 } from "react";
-import { CakeSliceIcon, SparkIcon } from "@/components/Icons";
+import { createPortal } from "react-dom";
+import {
+  ArrowIcon,
+  CakeSliceIcon,
+  SparkIcon
+} from "@/components/Icons";
 import { useToast } from "@/components/Toast";
-import type { User } from "@/lib/types";
+import { formatBirthdayFull } from "@/lib/birthday";
+import type {
+  ChangeQuotaState,
+  ProfileSaveResult,
+  User
+} from "@/lib/types";
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const AVATAR_SIZE = 512;
@@ -97,16 +108,39 @@ function avatarUrl(user: User) {
     : null;
 }
 
+type BirthdayConfirmation = {
+  removedWishCount: number;
+  oldBirthday: string;
+  newBirthday: string;
+  quota: ChangeQuotaState;
+};
+
+type SaveErrorPayload = {
+  error?: string;
+  code?: string;
+  fields?: Record<string, string>;
+  quota?: ChangeQuotaState;
+  removedWishCount?: number;
+  oldBirthday?: string;
+  newBirthday?: string;
+};
+
 export function ProfileEditor({
   user,
-  todayIso
+  todayIso,
+  quota: initialQuota
 }: {
   user: User;
   todayIso: string;
+  quota: ChangeQuotaState;
 }) {
   const router = useRouter();
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
+  const confirmDialog = useRef<HTMLDivElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const [savedProfile, setSavedProfile] = useState(user);
+  const [quota, setQuota] = useState(initialQuota);
   const [name, setName] = useState(user.name);
   const [bio, setBio] = useState(user.bio);
   const [birthday, setBirthday] = useState(user.birthday);
@@ -121,16 +155,70 @@ export function ProfileEditor({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [generalError, setGeneralError] = useState("");
   const [savedNote, setSavedNote] = useState("");
+  const [birthdayNotice, setBirthdayNotice] = useState("");
+  const [birthdayConfirmation, setBirthdayConfirmation] =
+    useState<BirthdayConfirmation | null>(null);
 
+  const profileLocked = quota.profile.remaining <= 0;
+  const birthdayLocked = quota.birthday.remaining <= 0;
   const bioLength = countCharacters(bio);
   const previewName = isAnonymous ? "匿名的朋友" : name.trim() || "你的称呼";
   const previewBio = bio.trim();
   const previewAvatarAlt = avatarSrc ? `${previewName}的头像预览` : "";
 
+  useEffect(() => {
+    if (!birthdayConfirmation) return;
+    const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    document.body.style.overflow = "hidden";
+    cancelButton.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !saving) {
+        setBirthdayConfirmation(null);
+        return;
+      }
+      if (event.key !== "Tab" || !confirmDialog.current) return;
+      const focusable = Array.from(
+        confirmDialog.current.querySelectorAll<HTMLElement>(
+          "button:not([disabled])"
+        )
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [birthdayConfirmation, saving]);
+
+  function resetToSavedProfile() {
+    setName(savedProfile.name);
+    setBio(savedProfile.bio);
+    setBirthday(savedProfile.birthday);
+    setIsAnonymous(savedProfile.isAnonymous);
+    setAvatarSrc(avatarUrl(savedProfile));
+    setAvatarAction("keep");
+    setAvatarDataUrl(null);
+    setBirthdayConfirmation(null);
+  }
+
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || profileLocked) return;
 
     setPreparingAvatar(true);
     setGeneralError("");
@@ -153,6 +241,7 @@ export function ProfileEditor({
   }
 
   function removeAvatar() {
+    if (profileLocked) return;
     setAvatarAction("remove");
     setAvatarDataUrl(null);
     setAvatarSrc(null);
@@ -174,10 +263,10 @@ export function ProfileEditor({
     return Object.keys(nextErrors).length === 0;
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitProfile(confirmBirthdayReset: boolean) {
     setGeneralError("");
     setSavedNote("");
+    setBirthdayNotice("");
     if (!validate()) return;
 
     setSaving(true);
@@ -192,20 +281,50 @@ export function ProfileEditor({
           isAnonymous,
           avatarAction,
           avatarDataUrl:
-            avatarAction === "replace" ? avatarDataUrl : undefined
+            avatarAction === "replace" ? avatarDataUrl : undefined,
+          confirmBirthdayReset
         })
       });
       const payload = (await response.json().catch(() => null)) as
-        | { user?: User; error?: string; fields?: Record<string, string> }
+        | (SaveErrorPayload & Partial<ProfileSaveResult>)
         | null;
 
-      if (!response.ok || !payload?.user) {
+      if (response.status === 409 && payload?.code === "BIRTHDAY_CONFIRMATION_REQUIRED") {
+        setBirthdayConfirmation({
+          removedWishCount: payload.removedWishCount ?? 0,
+          oldBirthday: payload.oldBirthday ?? savedProfile.birthday,
+          newBirthday: payload.newBirthday ?? birthday,
+          quota:
+            payload.quota ?? {
+              ...quota,
+              birthday: {
+                ...quota.birthday,
+                remaining: Math.max(0, quota.birthday.remaining)
+              }
+            }
+        });
+        return;
+      }
+
+      if (!response.ok || !payload?.user || !payload.quota) {
+        if (payload?.quota) setQuota(payload.quota);
         if (payload?.fields) setErrors(payload.fields);
+
+        if (
+          payload?.code === "PROFILE_MONTHLY_LIMIT_REACHED" ||
+          payload?.code === "BIRTHDAY_LIMIT_REACHED"
+        ) {
+          resetToSavedProfile();
+        }
+
         setGeneralError(payload?.error || "资料暂时没有保存成功，请稍后再试");
+        if (payload?.error) toast(payload.error, "error");
         return;
       }
 
       const savedUser = payload.user;
+      const nextQuota = payload.quota;
+      setSavedProfile(savedUser);
       setName(savedUser.name);
       setBio(savedUser.bio);
       setBirthday(savedUser.birthday);
@@ -213,14 +332,47 @@ export function ProfileEditor({
       setAvatarSrc(avatarUrl(savedUser));
       setAvatarAction("keep");
       setAvatarDataUrl(null);
+      setQuota(nextQuota);
+      setBirthdayConfirmation(null);
       setSavedNote("已经保存");
-      toast("资料已经替今天的你收好");
+
+      if (payload.profileChanged && nextQuota.profile.remaining === 0) {
+        toast("资料已保存。本月头像、称呼和简介已不能再次修改");
+      } else if (payload.birthdayChanged) {
+        const removed = payload.removedWishCount ?? 0;
+        const remaining = nextQuota.birthday.remaining;
+        const message =
+          removed > 0
+            ? `生日已更新，移除了 ${removed} 份生日祝福；还剩 ${remaining} 次修改机会`
+            : `生日已更新；还剩 ${remaining} 次修改机会`;
+        toast(message);
+      } else {
+        toast("资料已经替今天的你收好");
+      }
+
+      if (payload.birthdayChanged) {
+        const removed = payload.removedWishCount ?? 0;
+        setBirthdayNotice(
+          `生日已更新。本次移除了 ${removed} 份已收到的生日祝福，切蛋糕回礼保留；生日还剩 ${nextQuota.birthday.remaining} 次修改机会。`
+        );
+      }
+
       router.refresh();
     } catch {
       setGeneralError("网络似乎走神了，请稍后再试");
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitProfile(false);
+  }
+
+  async function confirmBirthdayChange() {
+    if (!birthdayConfirmation || saving) return;
+    await submitProfile(true);
   }
 
   return (
@@ -241,14 +393,30 @@ export function ProfileEditor({
           </div>
         ) : null}
 
+        {profileLocked ? (
+          <div className="quota-lock-note" role="status">
+            <span className="quota-lock-note__mark" aria-hidden="true">
+              !
+            </span>
+            <div>
+              <strong>本月资料修改次数已用完</strong>
+              <p>
+                头像、称呼和简介将在下月 1 日恢复修改；匿名开关和生日不受此限制。
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         <div className="profile-form__top">
           <div className="avatar-editor">
             <button
               type="button"
               className="avatar-editor__button avatar avatar--large"
               onClick={() => fileInput.current?.click()}
-              aria-label="更换头像"
-              disabled={preparingAvatar || saving}
+              aria-label={
+                profileLocked ? "本月头像修改次数已用完" : "更换头像"
+              }
+              disabled={preparingAvatar || saving || profileLocked}
             >
               {avatarSrc ? (
                 <img
@@ -272,13 +440,14 @@ export function ProfileEditor({
               accept="image/jpeg,image/png,image/webp"
               onChange={handleFileChange}
               tabIndex={-1}
+              disabled={profileLocked}
             />
             <div className="avatar-editor__actions">
               <button
                 type="button"
                 className="text-button"
                 onClick={() => fileInput.current?.click()}
-                disabled={preparingAvatar || saving}
+                disabled={preparingAvatar || saving || profileLocked}
               >
                 更换头像
               </button>
@@ -287,13 +456,17 @@ export function ProfileEditor({
                   type="button"
                   className="text-button text-button--muted"
                   onClick={removeAvatar}
-                  disabled={preparingAvatar || saving}
+                  disabled={preparingAvatar || saving || profileLocked}
                 >
                   移除
                 </button>
               ) : null}
             </div>
-            <p className="avatar-editor__hint">方形图片效果最好，最大 12MB</p>
+            <p className="avatar-editor__hint">
+              {profileLocked
+                ? "头像修改将在下月恢复"
+                : "方形图片效果最好，最大 12MB"}
+            </p>
           </div>
 
           <div className="profile-form__fields">
@@ -316,6 +489,7 @@ export function ProfileEditor({
                 placeholder="可填写昵称或真实姓名"
                 maxLength={24}
                 autoComplete="nickname"
+                disabled={profileLocked}
                 aria-invalid={Boolean(errors.name)}
                 aria-describedby={errors.name ? "profile-name-error" : undefined}
               />
@@ -331,7 +505,11 @@ export function ProfileEditor({
                 <label className="field__label" htmlFor="profile-birthday">
                   生日
                 </label>
-                <span className="field__hint">年份不会公开</span>
+                <span className="field__hint">
+                  {birthdayLocked
+                    ? "已无修改机会"
+                    : `还可修改 ${quota.birthday.remaining} 次`}
+                </span>
               </div>
               <input
                 id="profile-birthday"
@@ -342,18 +520,37 @@ export function ProfileEditor({
                 max={todayIso}
                 onChange={(event) => {
                   setBirthday(event.target.value);
+                  setBirthdayNotice("");
                   setSavedNote("");
                 }}
                 autoComplete="bday"
+                disabled={birthdayLocked}
                 aria-invalid={Boolean(errors.birthday)}
                 aria-describedby={
-                  errors.birthday ? "profile-birthday-error" : undefined
+                  errors.birthday
+                    ? "profile-birthday-error"
+                    : "profile-birthday-hint"
                 }
               />
               {errors.birthday ? (
                 <p className="field__error" id="profile-birthday-error">
                   {errors.birthday}
                 </p>
+              ) : (
+                <p
+                  className={`field__hint field__hint--block${birthdayLocked ? " field__hint--locked" : ""}`}
+                  id="profile-birthday-hint"
+                >
+                  {birthdayLocked
+                    ? "生日共有 3 次修改机会，当前已全部用完。"
+                    : `生日可修改 3 次，当前还剩 ${quota.birthday.remaining} 次；修改会清空收到的生日祝福。`}
+                </p>
+              )}
+              {birthdayNotice ? (
+                <div className="quota-inline-note" role="status">
+                  <SparkIcon aria-hidden="true" />
+                  <span>{birthdayNotice}</span>
+                </div>
               ) : null}
             </div>
           </div>
@@ -383,6 +580,7 @@ export function ProfileEditor({
             placeholder="一句话介绍自己，也可以留白"
             rows={3}
             maxLength={160}
+            disabled={profileLocked}
             aria-invalid={Boolean(errors.bio)}
             aria-describedby={errors.bio ? "profile-bio-error" : "profile-bio-hint"}
           />
@@ -490,6 +688,103 @@ export function ProfileEditor({
           </button>
         </div>
       </form>
+
+      {birthdayConfirmation
+        ? createPortal(
+            <div
+              className="confirm-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget && !saving) {
+                  setBirthdayConfirmation(null);
+                }
+              }}
+            >
+          <div
+            ref={confirmDialog}
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="birthday-confirm-title"
+            aria-describedby="birthday-confirm-description"
+          >
+            <span className="confirm-dialog__mark" aria-hidden="true">
+              !
+            </span>
+            <p className="eyebrow">BIRTHDAY CHANGE</p>
+            <h2 id="birthday-confirm-title">确认修改生日？</h2>
+
+            <div className="confirm-dialog__dates">
+              <span>
+                <small>现在</small>
+                {formatBirthdayFull(birthdayConfirmation.oldBirthday)}
+              </span>
+              <ArrowIcon aria-hidden="true" />
+              <span>
+                <small>改为</small>
+                {formatBirthdayFull(birthdayConfirmation.newBirthday)}
+              </span>
+            </div>
+
+            <div
+              className="confirm-dialog__warning"
+              id="birthday-confirm-description"
+            >
+              {birthdayConfirmation.removedWishCount > 0 ? (
+                <p>
+                  修改后，你已收到的{" "}
+                  <strong>{birthdayConfirmation.removedWishCount}</strong>{" "}
+                  份生日祝福会被移除，“我收到了多少祝福”的总数会相应减少。
+                </p>
+              ) : (
+                <p>本次没有已收到的生日祝福需要移除。</p>
+              )}
+              <p>
+                已收到的切蛋糕回礼会保留，你送给别人的祝福也不会被删除。
+              </p>
+            </div>
+
+            <p className="confirm-dialog__quota">
+              本次会消耗 1 次生日修改机会，完成后还剩{" "}
+              <strong>
+                {Math.max(
+                  0,
+                  birthdayConfirmation.quota.birthday.remaining - 1
+                )}
+              </strong>{" "}
+              次。此操作不可撤销。
+            </p>
+
+            <div className="confirm-dialog__actions">
+              <button
+                ref={cancelButton}
+                type="button"
+                className="button button--secondary"
+                onClick={() => setBirthdayConfirmation(null)}
+                disabled={saving}
+              >
+                先不改
+              </button>
+              <button
+                type="button"
+                className="button button--danger"
+                onClick={() => void confirmBirthdayChange()}
+                disabled={saving}
+              >
+                {saving ? (
+                  <>
+                    <span className="button-spinner" aria-hidden="true" />
+                    正在修改
+                  </>
+                ) : (
+                  "确认修改生日"
+                )}
+              </button>
+            </div>
+          </div>
+            </div>,
+            document.body
+          )
+        : null}
     </section>
   );
 }

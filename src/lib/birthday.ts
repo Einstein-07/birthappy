@@ -108,6 +108,20 @@ export function getYear(now: Date = new Date()) {
   return Number(formatter.format(now));
 }
 
+export function getMonthKey(now: Date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: SITE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit"
+  });
+  const parts = formatter.formatToParts(now);
+  const lookup: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") lookup[part.type] = part.value;
+  }
+  return `${lookup.year}-${lookup.month}`;
+}
+
 export function isValidBirthday(value: string, today = getToday()) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
 
@@ -144,6 +158,14 @@ export function formatBirthdayShort(birthday: string) {
   const day = Number(birthday.slice(8, 10));
   if (!month || !day) return birthday;
   return `${month} 月 ${day} 日`;
+}
+
+export function formatBirthdayFull(birthday: string) {
+  const year = Number(birthday.slice(0, 4));
+  const month = Number(birthday.slice(5, 7));
+  const day = Number(birthday.slice(8, 10));
+  if (!year || !month || !day) return birthday;
+  return `${year} 年 ${month} 月 ${day} 日`;
 }
 
 export function formatTodayLong(today = getToday()) {

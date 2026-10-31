@@ -12,6 +12,7 @@ import {
 } from "@/lib/birthday";
 import {
   getBlessingStats,
+  getChangeQuotaState,
   getPendingWishCount
 } from "@/lib/repository";
 
@@ -27,9 +28,10 @@ export default async function MePage() {
   if (!user) redirect("/login?next=/me");
 
   const today = getToday();
-  const [stats, pending] = await Promise.all([
+  const [stats, pending, quota] = await Promise.all([
     getBlessingStats(user.id),
-    getPendingWishCount(user.id)
+    getPendingWishCount(user.id),
+    getChangeQuotaState(user)
   ]);
   const birthdayToday = isBirthdayToday(user.birthday, today);
 
@@ -70,7 +72,7 @@ export default async function MePage() {
 
       <div className="me-grid">
         <div className="me-grid__main">
-          <ProfileEditor user={user} todayIso={today.iso} />
+          <ProfileEditor user={user} todayIso={today.iso} quota={quota} />
           <AccountBar account={user.account} />
         </div>
         <aside className="me-grid__side">

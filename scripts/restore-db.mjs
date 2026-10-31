@@ -33,16 +33,23 @@ try {
   process.exit(1);
 }
 
+const supportedFormats = ["birthappy-backup-v1", "birthappy-backup-v2"];
 if (
-  backup?.format !== "birthappy-backup-v1" ||
+  !supportedFormats.includes(backup?.format) ||
   !Array.isArray(backup.users) ||
   !Array.isArray(backup.blessings) ||
   !Array.isArray(backup.cakeCuts) ||
   !Array.isArray(backup.schema)
 ) {
-  console.error("这不是有效的 BirtHappy v1 备份文件，已停止恢复。");
+  console.error("这不是有效的 BirtHappy 备份文件，已停止恢复。");
   process.exit(1);
 }
+
+if (backup.changeQuotas != null && !Array.isArray(backup.changeQuotas)) {
+  console.error("备份中的 changeQuotas 字段格式不正确。");
+  process.exit(1);
+}
+const changeQuotas = backup.changeQuotas ?? [];
 
 function withIfNotExists(sql) {
   return sql
@@ -79,7 +86,7 @@ try {
   console.log(`\n目标数据库：${database.source}`);
   console.log(`备份文件：${backupFile}`);
   console.log(
-    `备份数据：${backup.users.length} 位用户，${backup.blessings.length} 条祝福，${backup.cakeCuts.length} 次切蛋糕`
+    `备份数据：${backup.users.length} 位用户，${backup.blessings.length} 条祝福，${backup.cakeCuts.length} 次切蛋糕，${changeQuotas.length} 条修改额度`
   );
 
   if (database.isRemote) {
@@ -92,11 +99,24 @@ try {
     await database.client.execute(withIfNotExists(item.sql));
   }
 
+  // v1 备份没有此表；恢复时补建，以便额度数据能够被后续逻辑懒初始化。
+  await database.client.execute(
+    `CREATE TABLE IF NOT EXISTS change_quotas (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('profile', 'birthday')),
+      period TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, kind, period)
+    )`
+  );
+
   const transaction = await database.client.transaction("write");
   try {
     await transaction.batch([
       "DELETE FROM cake_cuts",
       "DELETE FROM blessings",
+      "DELETE FROM change_quotas",
       "DELETE FROM users"
     ]);
 
@@ -148,39 +168,58 @@ try {
       ]
     }));
 
+    const quotaStatements = changeQuotas.map((quota) => ({
+      sql: `INSERT INTO change_quotas
+        (user_id, kind, period, used, updated_at)
+        VALUES (?, ?, ?, ?, ?)`,
+      args: [
+        quota.user_id,
+        quota.kind,
+        quota.period,
+        quota.used,
+        quota.updated_at
+      ]
+    }));
+
     await insertInChunks(transaction, userStatements, "用户");
+    await insertInChunks(transaction, quotaStatements, "修改额度");
     await insertInChunks(transaction, blessingStatements, "祝福");
     await insertInChunks(transaction, cutStatements, "切蛋糕记录");
 
     const counts = await Promise.all([
       transaction.execute("SELECT COUNT(*) AS count FROM users"),
       transaction.execute("SELECT COUNT(*) AS count FROM blessings"),
-      transaction.execute("SELECT COUNT(*) AS count FROM cake_cuts")
+      transaction.execute("SELECT COUNT(*) AS count FROM cake_cuts"),
+      transaction.execute("SELECT COUNT(*) AS count FROM change_quotas")
     ]);
     const actual = {
       users: Number(counts[0].rows[0]?.count ?? 0),
       blessings: Number(counts[1].rows[0]?.count ?? 0),
-      cakeCuts: Number(counts[2].rows[0]?.count ?? 0)
+      cakeCuts: Number(counts[2].rows[0]?.count ?? 0),
+      changeQuotas: Number(counts[3].rows[0]?.count ?? 0)
+    };
+    const expected = {
+      users: backup.users.length,
+      blessings: backup.blessings.length,
+      cakeCuts: backup.cakeCuts.length,
+      changeQuotas: changeQuotas.length
     };
 
     if (
-      actual.users !== backup.users.length ||
-      actual.blessings !== backup.blessings.length ||
-      actual.cakeCuts !== backup.cakeCuts.length
+      actual.users !== expected.users ||
+      actual.blessings !== expected.blessings ||
+      actual.cakeCuts !== expected.cakeCuts ||
+      actual.changeQuotas !== expected.changeQuotas
     ) {
       throw new Error(
-        `恢复后的行数不一致：${JSON.stringify(actual)}，预期 ${JSON.stringify({
-          users: backup.users.length,
-          blessings: backup.blessings.length,
-          cakeCuts: backup.cakeCuts.length
-        })}`
+        `恢复后的行数不一致：${JSON.stringify(actual)}，预期 ${JSON.stringify(expected)}`
       );
     }
 
     await transaction.commit();
 
     console.log(
-      `\n恢复完成：${actual.users} 位用户，${actual.blessings} 条祝福，${actual.cakeCuts} 次切蛋糕。`
+      `\n恢复完成：${actual.users} 位用户，${actual.blessings} 条祝福，${actual.cakeCuts} 次切蛋糕，${actual.changeQuotas} 条修改额度。`
     );
     console.log("请在网站上刷新并登录一个账号，确认数据正常。\n");
   } catch (error) {

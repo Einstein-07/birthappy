@@ -77,7 +77,15 @@ async function initializeSchema(client: Client) {
         share_count INTEGER NOT NULL,
         created_at TEXT NOT NULL
       )`,
-      `CREATE INDEX IF NOT EXISTS idx_cake_cuts_user ON cake_cuts (user_id, created_at)`
+      `CREATE INDEX IF NOT EXISTS idx_cake_cuts_user ON cake_cuts (user_id, created_at)`,
+      `CREATE TABLE IF NOT EXISTS change_quotas (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('profile', 'birthday')),
+        period TEXT NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, kind, period)
+      )`
     ],
     "write"
   );
