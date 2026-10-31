@@ -1,6 +1,4 @@
-import { createClient, type Client } from "@libsql/client";
-import fs from "node:fs";
-import path from "node:path";
+import type { Client } from "@libsql/client";
 
 const DEFAULT_DATABASE_URL = "file:./data/birthhappy.db";
 
@@ -12,25 +10,30 @@ const globalForDatabase = globalThis as unknown as {
 function resolveDatabaseConfig() {
   const url = process.env.TURSO_DATABASE_URL?.trim() || DEFAULT_DATABASE_URL;
   const authToken = process.env.TURSO_AUTH_TOKEN?.trim() || undefined;
+  return { url, authToken };
+}
+
+async function createDatabaseClient(): Promise<Client> {
+  const { url, authToken } = resolveDatabaseConfig();
 
   if (url.startsWith("file:")) {
+    // 本地开发才加载 Node 原生 SQLite 客户端，远程部署使用纯 HTTP 客户端。
+    const [{ createClient }, fs, path] = await Promise.all([
+      import("@libsql/client"),
+      import("node:fs"),
+      import("node:path")
+    ]);
     const rawPath = url.slice("file:".length).split("?")[0];
     if (rawPath && rawPath !== ":memory:") {
       const absolutePath = path.resolve(process.cwd(), rawPath);
       fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     }
+    return createClient({ url, authToken, intMode: "number" });
   }
 
-  return { url, authToken };
-}
-
-function createDatabaseClient() {
-  const { url, authToken } = resolveDatabaseConfig();
-  return createClient({
-    url,
-    authToken,
-    intMode: "number"
-  });
+  // Netlify / Vercel 等无服务器环境走 libSQL over HTTP，避免打包原生 .node 模块。
+  const { createClient } = await import("@libsql/client/web");
+  return createClient({ url, authToken, intMode: "number" });
 }
 
 async function initializeSchema(client: Client) {
@@ -81,7 +84,7 @@ async function initializeSchema(client: Client) {
 
 export async function getDatabase() {
   if (!globalForDatabase.__birthappyDb) {
-    globalForDatabase.__birthappyDb = createDatabaseClient();
+    globalForDatabase.__birthappyDb = await createDatabaseClient();
   }
 
   if (!globalForDatabase.__birthappySchema) {

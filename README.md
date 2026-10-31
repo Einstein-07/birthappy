@@ -35,7 +35,7 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 | 样式 | 原生 CSS（`src/app/globals.css`），无 UI 框架 |
 | 数据库 | libSQL / SQLite，生产使用 Turso |
 | 鉴权 | jose JWT + HttpOnly Cookie，bcryptjs 密码哈希 |
-| 部署 | Vercel Hobby + Turso 免费额度 |
+| 部署 | Vercel / Netlify 免费额度 + Turso 免费额度 |
 
 ## 本地启动
 
@@ -121,12 +121,16 @@ docs/
 
 ## 部署到公网
 
-完整步骤见 **[免费部署指南](docs/部署指南.md)**。简要来说：
+- 海外访问或已有稳定代理：见 **[Vercel 免费部署指南](docs/部署指南.md)**。
+- 国内网络优先：见 **[Netlify 免费部署指南](docs/Netlify部署指南.md)**。
+
+两个平台共用同一个 Turso 数据库。简要流程：
 
 1. 将代码推送到 GitHub。
 2. 在 [Turso](https://turso.tech) 创建免费数据库，取得 URL 与 Token。
-3. 在 [Vercel](https://vercel.com/new) 导入仓库，配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`。
-4. 部署完成后访问 `https://<你的项目>.vercel.app`。
+3. 在 [Netlify](https://app.netlify.com) 或 [Vercel](https://vercel.com/new) 导入仓库。
+4. 配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`。
+5. 部署完成后访问平台提供的免费域名。
 
 ## 已知边界
 
