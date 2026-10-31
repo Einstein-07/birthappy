@@ -1,0 +1,29 @@
+{
+  "name": "birthappy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "用一块蛋糕，记住今天过生日的人。",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "seed": "node scripts/seed-demo.mjs"
+  },
+  "dependencies": {
+    "@libsql/client": "0.18.0",
+    "bcryptjs": "3.0.3",
+    "jose": "6.2.14",
+    "next": "15.5.28",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
