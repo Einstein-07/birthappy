@@ -124,7 +124,7 @@ docs/
 - 海外访问或已有稳定代理：见 **[Vercel 免费部署指南](docs/部署指南.md)**。
 - 国内网络优先：见 **[Netlify 免费部署指南](docs/Netlify部署指南.md)**。
 
-两个平台共用同一个 Turso 数据库。简要流程：
+两个平台共用同一个 Turso 数据库。Netlify 新项目默认是 Private，部署成功后还需要在 `Project configuration → General → Visitor access` 把 Production 改成 **Public**，否则匿名访问会返回 401。简要流程：
 
 1. 将代码推送到 GitHub。
 2. 在 [Turso](https://turso.tech) 创建免费数据库，取得 URL 与 Token。

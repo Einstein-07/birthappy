@@ -107,6 +107,37 @@ Site is live
 https://birthappy.netlify.app
 ```
 
+## 5.1 必须把项目从 Private 改为 Public
+
+2026 年 7 月 28 日之后新建的 Netlify 团队，新项目默认是 **Private**（私有）。此时匿名用户访问 `*.netlify.app` 会收到 HTTP 401，并被重定向到 `app.netlify.com/edge-access` 登录页，看起来像“网站打不开”。
+
+Netlify 官方说明：
+
+- [Project visibility](https://docs.netlify.com/manage/security/secure-access-to-sites/project-visibility/)
+
+修改方法：
+
+**方式一：项目概览里的 Make public**
+
+1. 打开 Netlify 项目。
+2. 如果页面显示项目仍是 private，找到 **Make public**。
+3. 按引导把生产部署设为公开。
+
+**方式二：项目设置**
+
+```text
+Project configuration → General → Visitor access → Project visibility
+```
+
+1. 把 Production 的可见性改为 **Public**。
+2. Preview 是否公开可以自行决定，建议保持 Private。
+3. 保存。
+4. 重新打开生产地址，最好用无痕窗口验证。
+
+> 注意：环境变量可以先配置，再设为 Public；也可以在设为 Public 后配置并重新部署。未配置 Turso 环境变量时，首页会返回 500。
+>
+> 修改项目名会同时修改 `*.netlify.app` 子域名。可以在项目概览的名称下拉菜单或 `Project configuration → General` 中改名。
+
 ## 6. 修改站点名（推荐）
 
 Netlify 默认会生成随机名称。可以改成更好记的名字：
@@ -149,6 +180,10 @@ https://birthappy.netlify.app
 > 所有“今天”按北京时间（Asia/Shanghai）判断。测试用户的生日需要填部署当天。
 
 ## 8. 常见问题
+
+### 访问地址返回 401 / 自动跳到 Netlify 登录页
+
+这是项目可见性为 **Private**，不是登录功能或数据库问题。按上面的「5.1 必须把项目从 Private 改为 Public」修改。
 
 ### 页面 500 或注册失败
 
