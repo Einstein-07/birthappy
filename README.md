@@ -124,6 +124,8 @@ npm run backup
 
 备份文件默认写入 `backups/`，包含用户资料、密码哈希、头像、祝福、切蛋糕记录和修改额度。该目录已被 `.gitignore` 排除，**不要上传到公开位置**。
 
+如果本地网络无法连接 Turso，可在 Netlify 配置 `BACKUP_TOKEN`，通过受保护的 `/api/admin/backup` 接口从 Netlify 服务器下载生产备份。详细命令见[维护手册](docs/维护手册.md)。
+
 恢复前先在本地测试库演练：
 
 ```powershell
