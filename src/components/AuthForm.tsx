@@ -14,12 +14,14 @@ export function AuthForm({
   mode,
   nextPath,
   todayIso,
-  formToken = ""
+  formToken = "",
+  mailSender
 }: {
   mode: AuthMode;
   nextPath: string;
   todayIso: string;
   formToken?: string;
+  mailSender?: string;
 }) {
   const router = useRouter();
   const isRegister = mode === "register";
@@ -186,6 +188,7 @@ export function AuthForm({
             onCodeChange={setCode}
             disabled={loading}
             website={website}
+            mailSender={mailSender}
           />
           {errors.code ? (
             <p className="field__error" style={{ marginTop: "-10px" }}>

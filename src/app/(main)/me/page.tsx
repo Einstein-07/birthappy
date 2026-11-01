@@ -11,6 +11,7 @@ import {
   getToday,
   isBirthdayToday
 } from "@/lib/birthday";
+import { getMailSenderAddress } from "@/lib/mail";
 import {
   getBlessingStats,
   getChangeQuotaState,
@@ -72,15 +73,22 @@ export default async function MePage() {
       </header>
 
       <div className="me-grid">
-        <div className="me-grid__main">
+        <div className="me-grid__profile">
           <ProfileEditor user={user} todayIso={today.iso} quota={quota} />
-          <AccountBar user={user} />
-          <OtherSection email={user.email} />
         </div>
         <aside className="me-grid__side">
           <BlessingStats stats={stats} />
           <CutCake initialPending={pending} />
         </aside>
+        <div className="me-grid__account">
+          <AccountBar user={user} />
+        </div>
+        <div className="me-grid__other">
+          <OtherSection
+            email={user.email}
+            mailSender={getMailSenderAddress()}
+          />
+        </div>
       </div>
     </div>
   );

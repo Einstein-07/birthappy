@@ -1889,13 +1889,35 @@ h3 {
 .me-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(336px, 0.68fr);
+  grid-template-areas:
+    "profile side"
+    "account side"
+    "other side";
   gap: 23px;
   align-items: start;
   margin-top: 38px;
 }
 
-.me-grid__main,
+.me-grid__profile,
+.me-grid__account,
+.me-grid__other {
+  min-width: 0;
+}
+
+.me-grid__profile {
+  grid-area: profile;
+}
+
+.me-grid__account {
+  grid-area: account;
+}
+
+.me-grid__other {
+  grid-area: other;
+}
+
 .me-grid__side {
+  grid-area: side;
   display: grid;
   gap: 21px;
   min-width: 0;
@@ -2823,6 +2845,11 @@ h3 {
 
   .me-grid {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "profile"
+      "side"
+      "account"
+      "other";
   }
 
   .me-grid__side {
@@ -3798,8 +3825,58 @@ h3 {
   backdrop-filter: blur(10px);
 }
 
+.other-card__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.other-card__summary::-webkit-details-marker {
+  display: none;
+}
+
+.other-card__summary h2 {
+  margin-top: 6px;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 24px;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.other-card__chevron {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted-soft);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1;
+  transition:
+    transform 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.other-card[open] .other-card__chevron {
+  transform: rotate(45deg);
+  color: var(--accent-ink);
+  border-color: rgba(154, 78, 52, 0.24);
+}
+
 .other-list {
+  margin-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.other-item--contact {
+  cursor: default;
 }
 
 .other-item {

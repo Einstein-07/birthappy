@@ -1,1 +1,1 @@
-export const MAIL_SENDER_ADDRESS = "2597530663@qq.com";
+export const MAIL_SENDER_FALLBACK = "BirtHappy <onboarding@resend.dev>";

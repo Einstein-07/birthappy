@@ -22,7 +22,7 @@ Netlify 的 Next.js Runtime 基于 OpenNext，官方支持 App Router、SSR、Ro
    - `TURSO_DATABASE_URL`
    - `TURSO_AUTH_TOKEN`
 3. 一个全新的 `AUTH_SECRET`。
-4. QQ 邮箱 `2597530663@qq.com` 已开启 SMTP 服务，并生成有效授权码（不是 QQ 登录密码）。
+4. Resend 账号、API Key，以及一个已验证的发件域名（用于 `RESEND_FROM`）。
 5. Netlify 账号，使用 GitHub 登录。
 
 ### 如果 Turso Token 丢失
@@ -37,13 +37,18 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 复制输出，不要提交到 Git。
 
-### 配置 QQ 邮箱 SMTP
+### 配置 Resend 邮件
 
-1. 用浏览器登录 QQ 邮箱网页版，进入「设置 → 账号」。
-2. 找到「POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务」，开启 **IMAP/SMTP 服务**。
-3. 按提示完成短信验证，生成 16 位左右的 SMTP 授权码。
-4. 把邮箱填入 `MAIL_USER`，把授权码填入 `MAIL_PASS`，不要使用 QQ 登录密码。
-5. 若收到 `535 Login fail`，说明账号异常、SMTP 未开启、授权码错误或登录频率受限；重新生成授权码，必要时在 QQ 邮箱安全中心解除限制。
+1. 注册 [Resend](https://resend.com)，进入 **Domains** 添加并验证自己的域名。
+2. 在 **API Keys** 创建一个发送权限的 API Key，填入 Netlify 的 `RESEND_API_KEY`。
+3. 在 **Domains** 确认域名状态为已验证。
+4. 将 `RESEND_FROM` 设置为该域名下的地址，例如：
+   ```text
+   BirtHappy <noreply@your-domain.com>
+   ```
+5. 未验证域名时，Resend 只允许使用 `onboarding@resend.dev` 测试地址，通常只能发到 Resend 账户自己的邮箱，无法给普通用户发验证码。
+
+> 本项目使用 Resend HTTP API，而不是 SMTP。Netlify Functions 出站 SMTP 连接会被阻断，返回 `ETIMEDOUT`，因此不要配置或依赖 `MAIL_*` / QQ SMTP。
 
 ## 2. 确认 GitHub 代码已更新
 
@@ -87,11 +92,9 @@ Site configuration → Environment variables → Add a variable
 | `TURSO_DATABASE_URL` | `libsql://...turso.io` | All |
 | `TURSO_AUTH_TOKEN` | Turso Token | All |
 | `AUTH_SECRET` | 新生成的随机字符串 | All |
-| `MAIL_USER` | `2597530663@qq.com` | All |
-| `MAIL_PASS` | QQ 邮箱 SMTP 授权码 | All |
-| `MAIL_HOST` | `smtp.qq.com`（可选，默认值） | All |
-| `MAIL_PORT` | `465`（可选，默认值） | All |
-| `MAIL_SECURE` | `true`（可选，默认值） | All |
+| `RESEND_API_KEY` | Resend API Key | All |
+| `RESEND_FROM` | 已验证域名下的发件地址 | All |
+| `RESEND_REPLY_TO` | 可选回复地址 | All |
 | `BACKUP_TOKEN` | 至少 32 位随机字符串（可选） | All |
 
 说明：
@@ -100,8 +103,8 @@ Site configuration → Environment variables → Add a variable
 - 值不要加引号。
 - **不要**设置 `AUTH_COOKIE_SECURE=false`。Netlify 默认 HTTPS，Cookie 会自动使用 Secure。
 - `NODE_VERSION=22` 已经写在 `netlify.toml`，一般无需额外添加。
-- `MAIL_PASS`、`BACKUP_TOKEN` 不要写入 README、Git、截图或聊天记录。
-- 未配置 SMTP 时，邮箱注册接口会返回 503；已登录用户仍可浏览和编辑资料。
+- `RESEND_API_KEY`、`BACKUP_TOKEN` 不要写入 README、Git、截图或聊天记录。
+- 未配置 Resend 时，邮箱注册接口会返回 503；已登录用户仍可浏览和编辑资料。
 
 ## 5. 重新部署
 
@@ -189,8 +192,8 @@ https://birthappy.netlify.app
 
 按顺序检查：
 
-1. 首页能正常打开，不再长时间转圈；页脚显示注册人数和 `v2.0.0`。
-2. 点击「写下我的生日」，填写真实可收信邮箱，点击发送验证码；检查收件箱和垃圾箱。
+1. 首页能正常打开，不再长时间转圈；页脚显示注册人数和 `v2.0.1`。
+2. 点击「写下我的生日」，填写真实可收信邮箱，点击发送验证码；确认 Resend 域名已验证，并检查收件箱和垃圾箱。
 3. 输入验证码、勾选隐私协议完成注册，确认自动登录并获得 UID。
 4. 首页应该展示该用户（生日填部署当天）。
 5. 用第二个账号送蛋糕。
@@ -212,7 +215,7 @@ https://birthappy.netlify.app
 
 检查 Netlify 环境变量：
 
-- 数据库、鉴权、QQ SMTP 变量是否都存在
+- 数据库、鉴权、Resend 变量是否都存在
 - Scope 是否包含 **Functions / Runtime**，建议全选 All
 - `TURSO_DATABASE_URL` 是否以 `libsql://` 开头
 - Turso Token 是否有效
@@ -222,11 +225,13 @@ https://birthappy.netlify.app
 
 ### 验证码发送失败
 
-- 检查 `MAIL_USER` 与 `MAIL_PASS`。
-- 登录 QQ 邮箱网页版，确认 IMAP/SMTP 服务已开启、授权码未失效、账号未被风控。
-- 用 SMTP 测试工具或 `nodemailer` 的 `verify()` 检查是否返回 `535 Login fail`。
-- 如果错误码为 502，通常是 SMTP 连接或发信失败；如果为 503，说明环境变量未配置。
-- 不要把授权码贴到聊天、GitHub Issue 或截图中；泄露后立即在 QQ 邮箱重新生成。
+- 检查 `RESEND_API_KEY` 是否存在于 Netlify 的环境变量中，Scope 是否包含 Functions。
+- 检查 `RESEND_FROM` 是否为 Resend 已验证域名下的地址。
+- 如果返回 `RESEND_403`，常见原因是域名未验证、发件地址不属于已验证域名，或测试地址被限制收件人。
+- 如果返回 `RESEND_429`，说明 Resend 免费额度或频率限制已到；等待额度恢复或升级套餐。
+- 如果返回 `503`，说明 `RESEND_API_KEY` 未配置。
+- 不要把 API Key 贴到聊天、GitHub Issue 或截图中；泄露后立即在 Resend 撤销并重新创建。
+- 不要尝试改回 Netlify Functions 直连 QQ SMTP：实测 `465/587` 都会 `ETIMEDOUT`。
 
 ### 构建失败：找不到 Node 版本 / Next.js
 

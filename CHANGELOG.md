@@ -2,6 +2,21 @@
 
 本项目采用 [语义化版本](https://semver.org/lang/zh-CN/)，详细规则见 [版本规范](docs/版本规范.md)。
 
+## [2.0.1] - 2026-11-01
+
+### 修复
+
+- Netlify Functions 无法直连 QQ SMTP（465/587 均 `ETIMEDOUT`），改用 Resend HTTP API 发送验证码。
+- 增加 Resend 失败诊断码，区分配置缺失、域名未验证、频率限制等情况。
+
+### 变更
+
+- 邮件环境变量改为 `RESEND_API_KEY`、`RESEND_FROM`、可选 `RESEND_REPLY_TO`。
+- 验证码邮件与页面提示改为显示 Resend 配置的实际发件地址。
+- 隐私协议中的邮件服务商更新为 Resend。
+- 移动端「我」页顺序调整为：个人资料 → 收蛋糕/切蛋糕 → 账号与标识 → 其他。
+- 「其他」在桌面端和移动端都改为默认收起的下拉卡片。
+
 ## [2.0.0] - 2026-11-01
 
 ### 新增
@@ -23,7 +38,7 @@
 - 注册不再要求手填账号，改为邮箱验证。
 - 登录输入由「账号」改为「邮箱或 UID」。
 - 备份格式升级为 `birthappy-backup-v3`，包含邮箱与 UID；恢复脚本兼容 v1/v2。
-- 生产环境新增 `MAIL_USER`、`MAIL_PASS` 等 QQ SMTP 配置。
+- 生产环境新增 QQ SMTP 配置（2.0.1 已因 Netlify 网络限制替换为 Resend HTTP API）。
 
 ### 安全
 

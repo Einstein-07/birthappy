@@ -89,8 +89,8 @@ export default function PrivacyPage() {
               <strong>Turso：</strong>托管数据库，用于保存账号、资料、祝福和头像等数据。
             </li>
             <li>
-              <strong>QQ 邮箱：</strong>发送注册、绑定邮箱和注销账号的验证码。验证码邮件由
-              2597530663@qq.com 发出；邮箱服务商可能按自己的规则处理邮件。
+              <strong>Resend：</strong>发送注册、绑定邮箱和注销账号的验证码。Resend
+              会处理收件地址、验证码邮件内容和发送状态；实际发件地址由本站配置的已验证域名决定。
             </li>
           </ul>
           <p>

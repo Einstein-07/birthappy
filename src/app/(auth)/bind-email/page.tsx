@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AuthScene } from "@/components/AuthScene";
 import { BindEmailForm } from "@/components/BindEmailForm";
 import { getCurrentUser } from "@/lib/auth";
+import { getMailSenderAddress } from "@/lib/mail";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,10 @@ export default async function BindEmailPage() {
           <p className="auth-panel__lede">
             你的旧账号仍然保留。绑定邮箱后，可以用邮箱或 UID 登录，也可以申请注销账号。
           </p>
-          <BindEmailForm uid={user.uid} />
+          <BindEmailForm
+            uid={user.uid}
+            mailSender={getMailSenderAddress()}
+          />
         </div>
       </section>
     </div>

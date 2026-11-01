@@ -141,14 +141,18 @@ export async function POST(request: Request) {
         typeof (error as Error & { code?: unknown }).code === "string"
           ? (error as Error & { code: string }).code
           : "UNKNOWN";
+      const status = mailErrorCode === "RESEND_429" ? 429 : 502;
       return NextResponse.json(
         {
-          error: "验证码邮件发送失败，请稍后重试",
+          error:
+            status === 429
+              ? "验证码发送额度暂时用完，请稍后再试"
+              : "验证码邮件发送失败，请稍后重试",
           code: "MAIL_SEND_FAILED",
           mailErrorCode
         },
         {
-          status: 502,
+          status,
           headers: { "Cache-Control": "no-store" }
         }
       );

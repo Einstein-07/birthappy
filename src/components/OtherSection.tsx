@@ -14,7 +14,13 @@ const CONTACTS = [
   { label: "绛河の大肥鱼", qq: "2597530663" }
 ];
 
-export function OtherSection({ email }: { email: string | null }) {
+export function OtherSection({
+  email,
+  mailSender
+}: {
+  email: string | null;
+  mailSender?: string;
+}) {
   const router = useRouter();
   const toast = useToast();
   const [deletingOpen, setDeletingOpen] = useState(false);
@@ -90,41 +96,40 @@ export function OtherSection({ email }: { email: string | null }) {
   }
 
   return (
-    <section className="other-card" aria-labelledby="other-heading">
-      <div className="panel-heading panel-heading--compact">
+    <details className="other-card" aria-labelledby="other-heading">
+      <summary className="other-card__summary">
         <div>
           <p className="eyebrow">MORE</p>
           <h2 id="other-heading">其他</h2>
         </div>
-      </div>
+        <span className="other-card__chevron" aria-hidden="true">
+          +
+        </span>
+      </summary>
 
       <div className="other-list">
-        <details className="other-item">
-          <summary>
-            <span>
-              <strong>联系我们</strong>
-              <small>开发者 QQ 与用户群</small>
-            </span>
-            <span className="other-item__chevron" aria-hidden="true">
-              +
-            </span>
-          </summary>
-          <div className="other-contact">
-            {CONTACTS.map((contact) => (
-              <p key={contact.qq}>
-                <span>{contact.label}</span>
-                <strong>{contact.qq}</strong>
-              </p>
-            ))}
-            <p>
-              <span>BirtHappy 用户群</span>
-              <strong>1049433315</strong>
+        <div className="other-item other-item--contact">
+          <span>
+            <strong>联系我们</strong>
+            <small>开发者 QQ 与用户群</small>
+          </span>
+        </div>
+
+        <div className="other-contact">
+          {CONTACTS.map((contact) => (
+            <p key={contact.qq}>
+              <span>{contact.label}</span>
+              <strong>{contact.qq}</strong>
             </p>
-            <small>
-              添加好友或入群时请说明来意，不要向任何人提供登录密码或验证码。
-            </small>
-          </div>
-        </details>
+          ))}
+          <p>
+            <span>BirtHappy 用户群</span>
+            <strong>1049433315</strong>
+          </p>
+          <small>
+            添加好友或入群时请说明来意，不要向任何人提供登录密码或验证码。
+          </small>
+        </div>
 
         <Link
           className="other-item other-item--link"
@@ -194,6 +199,7 @@ export function OtherSection({ email }: { email: string | null }) {
                       code={code}
                       onCodeChange={setCode}
                       disabled={loading}
+                      mailSender={mailSender}
                       label="邮箱验证码"
                     />
                   </>
@@ -247,6 +253,6 @@ export function OtherSection({ email }: { email: string | null }) {
             document.body
           )
         : null}
-    </section>
+    </details>
   );
 }

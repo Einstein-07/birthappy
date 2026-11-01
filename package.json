@@ -1,6 +1,6 @@
 {
   "name": "birthappy",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "用一块蛋糕，记住今天过生日的人。",
   "author": "绛河",
@@ -17,7 +17,6 @@
     "bcryptjs": "3.0.3",
     "jose": "6.2.14",
     "next": "15.5.28",
-    "nodemailer": "10.3.1",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

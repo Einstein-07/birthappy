@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { ArrowIcon, SparkIcon } from "@/components/Icons";
-import { MAIL_SENDER_ADDRESS } from "@/lib/mail-constants";
 
 export type EmailCodePurpose = "register" | "bind" | "delete";
 
@@ -13,6 +12,7 @@ export function EmailCodeField({
   onCodeChange,
   disabled = false,
   website = "",
+  mailSender,
   label = "邮箱验证码"
 }: {
   email: string;
@@ -21,6 +21,7 @@ export function EmailCodeField({
   onCodeChange: (value: string) => void;
   disabled?: boolean;
   website?: string;
+  mailSender?: string;
   label?: string;
 }) {
   const [sending, setSending] = useState(false);
@@ -120,8 +121,13 @@ export function EmailCodeField({
       />
       <p className="mail-security-note">
         <SparkIcon aria-hidden="true" />
-        验证邮件由 QQ 邮箱 <strong>{MAIL_SENDER_ADDRESS}</strong>{" "}
-        发出，可能被判定为垃圾邮件，请同时检查垃圾箱或广告邮件。请勿向任何人提供验证码。
+        验证邮件由 BirtHappy 通过 Resend 发出
+        {mailSender ? (
+          <>
+            （发件地址：<strong>{mailSender}</strong>）
+          </>
+        ) : null}
+        ，可能被判定为垃圾邮件，请同时检查垃圾箱或广告邮件。请勿向任何人提供验证码。
       </p>
       {message ? (
         <p className="email-code-status is-success" role="status">

@@ -1,15 +1,4 @@
-import { resolve4 } from "node:dns/promises";
-import { setDefaultResultOrder } from "node:dns";
-import { createConnection } from "node:net";
-import nodemailer, { type Transporter } from "nodemailer";
-import { MAIL_SENDER_ADDRESS } from "@/lib/mail-constants";
-
-// 无服务器运行时有时没有可用的 IPv6 出口；优先使用 IPv4，避免连接悬挂。
-try {
-  setDefaultResultOrder("ipv4first");
-} catch {
-  // 旧版本 Node 忽略即可。
-}
+import { MAIL_SENDER_FALLBACK } from "@/lib/mail-constants";
 
 export type VerificationPurpose = "register" | "bind" | "delete";
 
@@ -20,94 +9,8 @@ export class MailConfigurationError extends Error {
   }
 }
 
-const globalForMail = globalThis as unknown as {
-  __birthappyMailer?: Transporter;
-};
-
-async function canConnect(host: string, port: number, timeoutMs = 4000) {
-  return new Promise<boolean>((resolve) => {
-    const socket = createConnection({ host, port });
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-  });
-}
-
-async function choosePort(host: string, primaryPort: number) {
-  const alternatePort = primaryPort === 465 ? 587 : 465;
-  if (primaryPort !== 465 && primaryPort !== 587) {
-    return primaryPort;
-  }
-
-  const [primaryOpen, alternateOpen] = await Promise.all([
-    canConnect(host, primaryPort),
-    canConnect(host, alternatePort)
-  ]);
-  if (primaryOpen) return primaryPort;
-  if (alternateOpen) {
-    console.warn(
-      `SMTP port ${primaryPort} unreachable; using alternate port ${alternatePort}`
-    );
-    return alternatePort;
-  }
-  const error = new Error("SMTP ports 465 and 587 are unreachable") as Error & {
-    code: string;
-  };
-  error.code = "ETIMEDOUT";
-  throw error;
-}
-
-async function getMailer() {
-  const user = process.env.MAIL_USER?.trim();
-  const pass = process.env.MAIL_PASS?.trim();
-  if (!user || !pass) throw new MailConfigurationError();
-
-  if (!globalForMail.__birthappyMailer) {
-    const configuredHost = process.env.MAIL_HOST?.trim() || "smtp.qq.com";
-    let connectHost = configuredHost;
-    let servername: string | undefined;
-    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(configuredHost)) {
-      try {
-        const addresses = await resolve4(configuredHost);
-        if (addresses[0]) {
-          connectHost = addresses[0];
-          servername = configuredHost;
-        }
-      } catch {
-        // 解析失败时退回域名，让节点自己处理。
-      }
-    }
-
-    const configuredPort = Number(process.env.MAIL_PORT || 465);
-    const port = await choosePort(connectHost, configuredPort);
-    const secure =
-      port === 465 ? true : port === 587 ? false : process.env.MAIL_SECURE !== "false";
-
-    globalForMail.__birthappyMailer = nodemailer.createTransport({
-      host: connectHost,
-      port,
-      secure,
-      auth: { user, pass },
-      ...(servername ? { tls: { servername } } : {}),
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 15000
-    });
-  }
-
-  return globalForMail.__birthappyMailer;
-}
-
-export function isMailConfigured() {
-  return Boolean(process.env.MAIL_USER?.trim() && process.env.MAIL_PASS?.trim());
+function configuredSender() {
+  return process.env.RESEND_FROM?.trim() || MAIL_SENDER_FALLBACK;
 }
 
 function purposeLabel(purpose: VerificationPurpose) {
@@ -116,15 +19,27 @@ function purposeLabel(purpose: VerificationPurpose) {
   return "注册";
 }
 
+export function isMailConfigured() {
+  return Boolean(process.env.RESEND_API_KEY?.trim());
+}
+
+export function getMailSenderAddress() {
+  const sender = configuredSender();
+  const match = /<([^>]+)>/.exec(sender);
+  return (match?.[1] ?? sender).trim();
+}
+
 export async function sendVerificationEmail(
   to: string,
   code: string,
   purpose: VerificationPurpose
 ) {
-  const mailer = await getMailer();
-  const user = process.env.MAIL_USER?.trim() || MAIL_SENDER_ADDRESS;
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) throw new MailConfigurationError();
+
   const label = purposeLabel(purpose);
-  const fromName = process.env.MAIL_FROM_NAME?.trim() || "BirtHappy";
+  const sender = configuredSender();
+  const senderAddress = getMailSenderAddress();
 
   const text = [
     `你正在${label} BirtHappy。`,
@@ -132,7 +47,7 @@ export async function sendVerificationEmail(
     `验证码：${code}`,
     "验证码 10 分钟内有效，请勿转发给任何人。",
     "",
-    `本邮件由 BirtHappy 通过 QQ 邮箱 ${MAIL_SENDER_ADDRESS} 发出。`,
+    `本邮件由 BirtHappy 发出（发件地址：${senderAddress}）。`,
     "如果这不是你本人的操作，请忽略本邮件。",
     "为防止诈骗，请只在本站页面输入验证码，不要向任何人提供验证码。"
   ].join("\n");
@@ -145,16 +60,51 @@ export async function sendVerificationEmail(
         <p style="margin:0 0 18px;color:#726b61;font-size:14px;line-height:1.8;">你正在${label} BirtHappy，请在页面中输入下面的验证码。</p>
         <div style="margin:24px 0;padding:18px;border-radius:14px;background:#f3e7db;text-align:center;font-size:34px;letter-spacing:.28em;font-weight:600;color:#9a4e34;">${code}</div>
         <p style="margin:0 0 10px;color:#726b61;font-size:13px;line-height:1.8;">验证码 10 分钟内有效，请勿转发给任何人。</p>
-        <p style="margin:0;color:#948b7e;font-size:12px;line-height:1.8;">本邮件由 BirtHappy 通过 QQ 邮箱 ${MAIL_SENDER_ADDRESS} 发出。如果这不是你本人的操作，请忽略本邮件。为防止诈骗，请只在本站页面输入验证码，不要向任何人提供验证码。</p>
+        <p style="margin:0;color:#948b7e;font-size:12px;line-height:1.8;">本邮件由 BirtHappy 发出（发件地址：${senderAddress}）。如果这不是你本人的操作，请忽略本邮件。为防止诈骗，请只在本站页面输入验证码，不要向任何人提供验证码。</p>
       </div>
     </div>
   `;
 
-  await mailer.sendMail({
-    from: `"${fromName}" <${user}>`,
-    to,
-    subject: `BirtHappy ${label}验证码`,
-    text,
-    html
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: sender,
+        to: [to],
+        subject: `BirtHappy ${label}验证码`,
+        text,
+        html,
+        ...(process.env.RESEND_REPLY_TO?.trim()
+          ? { reply_to: process.env.RESEND_REPLY_TO.trim() }
+          : {})
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+  } catch (error) {
+    const sendError = new Error("Resend 请求失败") as Error & {
+      code: string;
+    };
+    sendError.code =
+      error instanceof Error && error.name === "TimeoutError"
+        ? "RESEND_TIMEOUT"
+        : "RESEND_NETWORK_ERROR";
+    throw sendError;
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error("Resend send failed", response.status, detail.slice(0, 500));
+    const sendError = new Error("Resend 拒绝了发信请求") as Error & {
+      code: string;
+    };
+    sendError.code = `RESEND_${response.status}`;
+    throw sendError;
+  }
+
+  return (await response.json().catch(() => ({}))) as { id?: string };
 }

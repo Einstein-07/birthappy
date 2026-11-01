@@ -7,7 +7,13 @@ import { EmailCodeField } from "@/components/EmailCodeField";
 import { ArrowIcon } from "@/components/Icons";
 import { useToast } from "@/components/Toast";
 
-export function BindEmailForm({ uid }: { uid: string }) {
+export function BindEmailForm({
+  uid,
+  mailSender
+}: {
+  uid: string;
+  mailSender?: string;
+}) {
   const router = useRouter();
   const toast = useToast();
   const [email, setEmail] = useState("");
@@ -99,6 +105,7 @@ export function BindEmailForm({ uid }: { uid: string }) {
         code={code}
         onCodeChange={setCode}
         disabled={loading}
+        mailSender={mailSender}
         label="邮箱验证码"
       />
       {errors.code ? (

@@ -19,7 +19,7 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 - **纯黑默认头像**：没有上传头像时显示纯黑圆形；简介为空时首页完全不渲染简介区域。
 - **切蛋糕**：一次性回应所有尚未回应的祝福，并给每位祝福者回赠一块蛋糕；回礼会记入对方的「收到祝福」。
 - **祝福统计**：总览收到的全部祝福，支持按自然年细分，同时区分生日蛋糕与回礼。
-- **邮箱验证码注册**：使用 QQ 邮箱 SMTP 发送验证码；10 分钟有效、一次性使用、最多尝试 5 次。注册页明确提示发件邮箱和垃圾邮件风险。
+- **邮箱验证码注册**：使用 Resend HTTP API 发送验证码；10 分钟有效、一次性使用、最多尝试 5 次。注册页明确提示发件地址和垃圾邮件风险。
 - **邮箱 / UID 登录**：bcrypt 密码哈希、HttpOnly 签名 Cookie、同源校验、参数化 SQL；旧账号可在绑定邮箱前过渡登录。
 - **UID**：注册后系统生成 UID，可修改一次；页面显示剩余次数，旧 UID 修改后立即失效。
 - **每日注册上限**：北京时间每日最多 100 位；同一网络每日最多 5 位；验证码发送按邮箱、IP、全站限流。
@@ -46,7 +46,7 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 | 样式 | 原生 CSS（`src/app/globals.css`），无 UI 框架 |
 | 数据库 | libSQL / SQLite，生产使用 Turso |
 | 鉴权 | jose JWT + HttpOnly Cookie，bcryptjs 密码哈希 |
-| 邮件 | Nodemailer + QQ 邮箱 SMTP（验证码） |
+| 邮件 | Resend HTTP API（验证码） |
 | 部署 | Netlify 免费额度 + Turso 免费额度 |
 
 ## 本地启动
@@ -76,7 +76,7 @@ npm run seed
 | `zhiyao@example.com` / `ZHIYAO` | 非今日生日，可用于给他人送蛋糕 |
 | `nan@example.com` / `NANYU` | 非今日生日 |
 
-> 演示邮箱为 `example.com`，不会真正收信；邮箱验证码注册需要在环境中配置有效的 QQ SMTP 后才能测试。
+> 演示邮箱为 `example.com`，不会真正收信；邮箱验证码注册需要在环境中配置 Resend API Key 和已验证的发件地址后才能测试。
 
 > `seed` 默认只会写入 `file:` 本地数据库；若目标是远程数据库，脚本会拒绝执行。请勿把演示数据写入正式环境。
 
@@ -90,15 +90,12 @@ npm run seed
 | `TURSO_AUTH_TOKEN` | 生产必填 | Turso 数据库访问令牌 |
 | `AUTH_SECRET` | 生产必填 | 至少 32 位随机字符串，用于签名登录 Cookie、验证码和表单令牌；缺失时相关逻辑拒绝工作 |
 | `AUTH_COOKIE_SECURE` | 否 | 仅供本机用 HTTP 跑生产构建时设为 `false`；线上不要设置 |
-| `MAIL_USER` | 生产必填 | QQ 发件邮箱 `2597530663@qq.com` |
-| `MAIL_PASS` | 生产必填 | QQ 邮箱 SMTP 授权码；不是 QQ 登录密码，只放在环境变量，不提交仓库 |
-| `MAIL_HOST` | 否 | 默认 `smtp.qq.com` |
-| `MAIL_PORT` | 否 | 默认 `465` |
-| `MAIL_SECURE` | 否 | 默认 `true`（465 端口 SSL） |
-| `MAIL_FROM_NAME` | 否 | 发件人显示名，默认 `BirtHappy` |
+| `RESEND_API_KEY` | 生产必填 | Resend API Key，只在服务端环境变量中使用 |
+| `RESEND_FROM` | 生产强烈建议 | 已在 Resend 验证域名的发件地址，如 `BirtHappy <noreply@your-domain.com>` |
+| `RESEND_REPLY_TO` | 否 | 可选回复地址 |
 | `BACKUP_TOKEN` | 可选 | 生产备份下载接口令牌，至少 32 位；不配置时接口返回 404 |
 
-QQ 邮箱需在网页版设置中开启 SMTP 服务并生成授权码。授权码失效、账号异常或未开启服务时，验证码接口会返回明确错误；不会把明文验证码写入日志。
+Resend 需要在 Dashboard 中验证域名，并把 `RESEND_FROM` 设置为该域名下的地址；否则免费测试地址 `onboarding@resend.dev` 通常只能发往 Resend 账户自己的邮箱。Resend 免费额度与每日 100 人上限匹配，适合当前规模。
 
 ## 常用命令
 
@@ -128,7 +125,7 @@ npm run restore -- <备份文件.json> --force  # 从备份恢复
 - 注销账号必须通过当前邮箱验证码；注销后 UID 回收，所有关联数据删除。
 - 称呼/简介命中敏感词时，前端实时警告并禁用提交，后端仍会返回 422 二次拒绝。
 - 页脚版权署名：`© 年份 绛河 · BirtHappy`；另以小字显示注册人数和语义化版本。
-- 版本规则见 [版本规范](docs/版本规范.md)，当前版本 `v2.0.0`。
+- 版本规则见 [版本规范](docs/版本规范.md)，当前版本 `v2.0.1`。
 
 完整产品规则与验收条件见 [需求文档](docs/需求文档.md)。
 
@@ -193,7 +190,7 @@ CHANGELOG.md
 1. 将代码推送到 GitHub。
 2. 在 [Turso](https://turso.tech) 创建免费数据库，取得 URL 与 Token。
 3. 在 [Netlify](https://app.netlify.com) 导入仓库。
-4. 配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`、`MAIL_USER`、`MAIL_PASS`；需要生产备份下载时再配置 `BACKUP_TOKEN`。
+4. 配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`、`RESEND_API_KEY`、`RESEND_FROM`；需要生产备份下载时再配置 `BACKUP_TOKEN`。
 5. 部署完成后访问 Netlify 域名，检查页脚版本、注册验证码和旧账号迁移。
 
 ## 已知边界
@@ -206,4 +203,4 @@ CHANGELOG.md
 - 内容举报后台与人工审核队列（仅做基础敏感词过滤）。
 - 多时区选择（统一按北京时间）。
 
-公开运营前仍建议补充：可靠的事务邮件服务、监控告警、备份异地保存、账号恢复流程和更完整的内容安全策略。QQ SMTP 授权码必须有效；当前生产配置前，邮箱注册会返回明确的服务未就绪提示。
+公开运营前仍建议补充：监控告警、备份异地保存、账号恢复流程和更完整的内容安全策略。Resend 发件域名必须验证；未配置 `RESEND_FROM` 时只能使用测试地址，通常无法给普通用户发信。

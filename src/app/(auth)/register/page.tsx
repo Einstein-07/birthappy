@@ -6,6 +6,7 @@ import { safeNextPath } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { getToday } from "@/lib/birthday";
 import { createFormToken } from "@/lib/form-token";
+import { getMailSenderAddress } from "@/lib/mail";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,7 @@ export default async function RegisterPage({
             nextPath={nextPath}
             todayIso={getToday().iso}
             formToken={createFormToken("register")}
+            mailSender={getMailSenderAddress()}
           />
         </div>
       </section>
