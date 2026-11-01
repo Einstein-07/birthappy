@@ -1,5 +1,6 @@
 import { resolve4 } from "node:dns/promises";
 import { setDefaultResultOrder } from "node:dns";
+import { createConnection } from "node:net";
 import nodemailer, { type Transporter } from "nodemailer";
 import { MAIL_SENDER_ADDRESS } from "@/lib/mail-constants";
 
@@ -23,6 +24,47 @@ const globalForMail = globalThis as unknown as {
   __birthappyMailer?: Transporter;
 };
 
+async function canConnect(host: string, port: number, timeoutMs = 4000) {
+  return new Promise<boolean>((resolve) => {
+    const socket = createConnection({ host, port });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function choosePort(host: string, primaryPort: number) {
+  const alternatePort = primaryPort === 465 ? 587 : 465;
+  if (primaryPort !== 465 && primaryPort !== 587) {
+    return primaryPort;
+  }
+
+  const [primaryOpen, alternateOpen] = await Promise.all([
+    canConnect(host, primaryPort),
+    canConnect(host, alternatePort)
+  ]);
+  if (primaryOpen) return primaryPort;
+  if (alternateOpen) {
+    console.warn(
+      `SMTP port ${primaryPort} unreachable; using alternate port ${alternatePort}`
+    );
+    return alternatePort;
+  }
+  const error = new Error("SMTP ports 465 and 587 are unreachable") as Error & {
+    code: string;
+  };
+  error.code = "ETIMEDOUT";
+  throw error;
+}
+
 async function getMailer() {
   const user = process.env.MAIL_USER?.trim();
   const pass = process.env.MAIL_PASS?.trim();
@@ -44,10 +86,15 @@ async function getMailer() {
       }
     }
 
+    const configuredPort = Number(process.env.MAIL_PORT || 465);
+    const port = await choosePort(connectHost, configuredPort);
+    const secure =
+      port === 465 ? true : port === 587 ? false : process.env.MAIL_SECURE !== "false";
+
     globalForMail.__birthappyMailer = nodemailer.createTransport({
       host: connectHost,
-      port: Number(process.env.MAIL_PORT || 465),
-      secure: process.env.MAIL_SECURE !== "false",
+      port,
+      secure,
       auth: { user, pass },
       ...(servername ? { tls: { servername } } : {}),
       connectionTimeout: 8000,
