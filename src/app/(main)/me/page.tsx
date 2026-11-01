@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AccountBar } from "@/components/AccountBar";
 import { BlessingStats } from "@/components/BlessingStats";
 import { CutCake } from "@/components/CutCake";
+import { OtherSection } from "@/components/OtherSection";
 import { ProfileEditor } from "@/components/ProfileEditor";
 import { getCurrentUser } from "@/lib/auth";
 import {
@@ -73,7 +74,8 @@ export default async function MePage() {
       <div className="me-grid">
         <div className="me-grid__main">
           <ProfileEditor user={user} todayIso={today.iso} quota={quota} />
-          <AccountBar account={user.account} />
+          <AccountBar user={user} />
+          <OtherSection email={user.email} />
         </div>
         <aside className="me-grid__side">
           <BlessingStats stats={stats} />

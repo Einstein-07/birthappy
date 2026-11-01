@@ -1,6 +1,14 @@
 import type { Client, Row, Transaction } from "@libsql/client";
 import { getDatabase } from "@/lib/db";
-import { getMonthKey, getYear, type Today } from "@/lib/birthday";
+import {
+  getMonthKey,
+  getToday,
+  getYear,
+  type Today
+} from "@/lib/birthday";
+import { normalizeEmail } from "@/lib/email";
+import { generateUid } from "@/lib/uid";
+import { isValidUid, normalizeUid } from "@/lib/uid-rules";
 import type {
   BlessingStats,
   BirthdayPerson,
@@ -12,6 +20,8 @@ import type {
 
 export const PROFILE_CHANGE_LIMIT = 3;
 export const BIRTHDAY_CHANGE_LIMIT = 3;
+export const DAILY_REGISTRATION_LIMIT = 100;
+export const REGISTRATION_IP_DAILY_LIMIT = 5;
 const BIRTHDAY_PERIOD = "lifetime";
 
 type SqlExecutor = Client | Transaction;
@@ -45,9 +55,37 @@ export class ProfileChangeError extends Error {
   }
 }
 
+export class RegistrationError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly fields?: Record<string, string>;
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    options: {
+      status: number;
+      code: string;
+      fields?: Record<string, string>;
+      details?: Record<string, unknown>;
+    }
+  ) {
+    super(message);
+    this.name = "RegistrationError";
+    this.status = options.status;
+    this.code = options.code;
+    this.fields = options.fields;
+    this.details = options.details;
+  }
+}
+
 const USER_COLUMNS = `
   id,
   account,
+  email,
+  email_verified_at,
+  uid,
+  uid_change_count,
   name,
   bio,
   birthday,
@@ -61,6 +99,11 @@ function toUser(row: Row): User {
   return {
     id: String(row.id),
     account: String(row.account),
+    email: row.email == null ? null : String(row.email),
+    emailVerifiedAt:
+      row.email_verified_at == null ? null : String(row.email_verified_at),
+    uid: String(row.uid ?? ""),
+    uidChangeCount: Number(row.uid_change_count ?? 0),
     name: String(row.name),
     bio: String(row.bio ?? ""),
     birthday: String(row.birthday),
@@ -85,6 +128,86 @@ async function findUserById(
 export async function getUserById(id: string): Promise<User | null> {
   const db = await getDatabase();
   return findUserById(db, id);
+}
+
+export async function getUserCount(): Promise<number> {
+  const db = await getDatabase();
+  const result = await db.execute("SELECT COUNT(*) AS count FROM users");
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+export async function getUserByEmail(
+  email: string
+): Promise<(User & { passwordHash: string }) | null> {
+  const db = await getDatabase();
+  const result = await db.execute({
+    sql: `SELECT ${USER_COLUMNS}, password_hash FROM users WHERE email = ? LIMIT 1`,
+    args: [normalizeEmail(email)]
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return { ...toUser(row), passwordHash: String(row.password_hash) };
+}
+
+async function getUserWithPasswordByIdentifier(
+  identifier: string
+): Promise<(User & { passwordHash: string }) | null> {
+  const db = await getDatabase();
+  const normalized = identifier.trim();
+  let result;
+
+  if (normalized.includes("@")) {
+    result = await db.execute({
+      sql: `SELECT ${USER_COLUMNS}, password_hash FROM users WHERE email = ? LIMIT 1`,
+      args: [normalizeEmail(normalized)]
+    });
+  } else {
+    result = await db.execute({
+      sql: `SELECT ${USER_COLUMNS}, password_hash FROM users WHERE uid = ? LIMIT 1`,
+      args: [normalizeUid(normalized)]
+    });
+
+    if (result.rows.length === 0) {
+      // 过渡期兼容：仅允许尚未绑定邮箱的旧账号使用原账号名登录。
+      result = await db.execute({
+        sql: `SELECT ${USER_COLUMNS}, password_hash FROM users
+          WHERE account = ? COLLATE NOCASE AND email IS NULL LIMIT 1`,
+        args: [normalized]
+      });
+    }
+  }
+
+  const row = result.rows[0];
+  if (!row) return null;
+  return { ...toUser(row), passwordHash: String(row.password_hash) };
+}
+
+export async function getUserForLogin(identifier: string) {
+  return getUserWithPasswordByIdentifier(identifier);
+}
+
+export async function isEmailTaken(email: string, excludeUserId?: string) {
+  const db = await getDatabase();
+  const normalized = normalizeEmail(email);
+  const result = excludeUserId
+    ? await db.execute({
+        sql: "SELECT 1 FROM users WHERE email = ? AND id <> ? LIMIT 1",
+        args: [normalized, excludeUserId]
+      })
+    : await db.execute({
+        sql: "SELECT 1 FROM users WHERE email = ? LIMIT 1",
+        args: [normalized]
+      });
+  return result.rows.length > 0;
+}
+
+export async function getDailyRegistrationUsed(day = getToday().iso) {
+  const db = await getDatabase();
+  const result = await db.execute({
+    sql: "SELECT used FROM daily_registration_counters WHERE day = ? LIMIT 1",
+    args: [day]
+  });
+  return Number(result.rows[0]?.used ?? 0);
 }
 
 function initialProfileUsage(createdAt: string, monthKey: string) {
@@ -203,38 +326,118 @@ export async function accountExists(account: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
-export async function createUser(input: {
+export async function registerUser(input: {
   id: string;
-  account: string;
+  email: string;
   passwordHash: string;
   name: string;
   birthday: string;
-  isAnonymous?: boolean;
+  ipHash: string;
+  codeId: string;
 }): Promise<User> {
   const db = await getDatabase();
+  const email = normalizeEmail(input.email);
   const now = new Date();
   const nowIso = now.toISOString();
   const monthKey = getMonthKey(now);
+  const day = getToday().iso;
+  const transaction = await db.transaction("write");
 
-  await db.batch(
-    [
+  try {
+    const emailConflict = await transaction.execute({
+      sql: "SELECT 1 FROM users WHERE email = ? LIMIT 1",
+      args: [email]
+    });
+    if (emailConflict.rows.length > 0) {
+      throw new RegistrationError("这个邮箱已经注册过了", {
+        status: 409,
+        code: "EMAIL_TAKEN",
+        fields: { email: "这个邮箱已经注册过了" }
+      });
+    }
+
+    await transaction.execute({
+      sql: `INSERT OR IGNORE INTO daily_registration_counters (day, used)
+        VALUES (?, 0)`,
+      args: [day]
+    });
+    const slot = await transaction.execute({
+      sql: `UPDATE daily_registration_counters
+        SET used = used + 1
+        WHERE day = ? AND used < ?`,
+      args: [day, DAILY_REGISTRATION_LIMIT]
+    });
+    if (Number(slot.rowsAffected) === 0) {
+      throw new RegistrationError("今日注册名额已满，请明天再试", {
+        status: 429,
+        code: "DAILY_REGISTRATION_LIMIT_REACHED",
+        details: { dailyLimit: DAILY_REGISTRATION_LIMIT }
+      });
+    }
+
+    const ipCount = await transaction.execute({
+      sql: `SELECT COUNT(*) AS count FROM registration_events
+        WHERE ip_hash = ? AND day = ?`,
+      args: [input.ipHash, day]
+    });
+    if (Number(ipCount.rows[0]?.count ?? 0) >= REGISTRATION_IP_DAILY_LIMIT) {
+      throw new RegistrationError(
+        "当前网络今日注册次数过多，请明天再试或更换网络",
+        {
+          status: 429,
+          code: "IP_REGISTRATION_LIMIT_REACHED",
+          details: { ipDailyLimit: REGISTRATION_IP_DAILY_LIMIT }
+        }
+      );
+    }
+
+    const consumed = await transaction.execute({
+      sql: `UPDATE email_codes
+        SET consumed_at = ?
+        WHERE id = ? AND purpose = 'register' AND email = ?
+          AND consumed_at IS NULL AND expires_at > ?`,
+      args: [nowIso, input.codeId, email, nowIso]
+    });
+    if (Number(consumed.rowsAffected) === 0) {
+      throw new RegistrationError("验证码已失效，请重新获取", {
+        status: 422,
+        code: "EMAIL_CODE_INVALID",
+        fields: { code: "验证码已失效，请重新获取" }
+      });
+    }
+
+    let uid = generateUid();
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const conflict = await transaction.execute({
+        sql: "SELECT 1 FROM users WHERE uid = ? OR account = ? COLLATE NOCASE LIMIT 1",
+        args: [uid, uid]
+      });
+      if (conflict.rows.length === 0) break;
+      uid = generateUid();
+    }
+
+    const account = `mail:${email}`;
+    await transaction.execute({
+      sql: `INSERT INTO users
+        (id, account, password_hash, name, bio, birthday, is_anonymous,
+         email, email_verified_at, uid, uid_change_count, created_at, updated_at)
+        VALUES (?, ?, ?, ?, '', ?, 0, ?, ?, ?, 0, ?, ?)`,
+      args: [
+        input.id,
+        account,
+        input.passwordHash,
+        input.name,
+        input.birthday,
+        email,
+        nowIso,
+        uid,
+        nowIso,
+        nowIso
+      ]
+    });
+
+    await transaction.batch([
       {
-        sql: `INSERT INTO users
-          (id, account, password_hash, name, bio, birthday, is_anonymous, created_at, updated_at)
-          VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-        args: [
-          input.id,
-          input.account,
-          input.passwordHash,
-          input.name,
-          input.birthday,
-          input.isAnonymous ? 1 : 0,
-          nowIso,
-          nowIso
-        ]
-      },
-      {
-        // 注册本身计为当月第 1 次资料修改。
         sql: `INSERT INTO change_quotas
           (user_id, kind, period, used, updated_at)
           VALUES (?, 'profile', ?, 1, ?)`,
@@ -245,14 +448,54 @@ export async function createUser(input: {
           (user_id, kind, period, used, updated_at)
           VALUES (?, 'birthday', 'lifetime', 0, ?)`,
         args: [input.id, nowIso]
+      },
+      {
+        sql: `INSERT INTO registration_events
+          (id, user_id, email, ip_hash, day, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [
+          crypto.randomUUID(),
+          input.id,
+          email,
+          input.ipHash,
+          day,
+          nowIso
+        ]
       }
-    ],
-    "write"
-  );
+    ]);
 
-  const user = await getUserById(input.id);
-  if (!user) throw new Error("创建账号后未能读取用户资料");
-  return user;
+    await transaction.commit();
+
+    return {
+      id: input.id,
+      account,
+      email,
+      emailVerifiedAt: nowIso,
+      uid,
+      uidChangeCount: 0,
+      name: input.name,
+      bio: "",
+      birthday: input.birthday,
+      isAnonymous: false,
+      hasAvatar: false,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+  } catch (error) {
+    await transaction.rollback();
+    if (
+      error instanceof Error &&
+      /UNIQUE|SQLITE_CONSTRAINT/i.test(error.message)
+    ) {
+      throw new RegistrationError("邮箱或 UID 已被占用，请重试", {
+        status: 409,
+        code: "ACCOUNT_CONFLICT"
+      });
+    }
+    throw error;
+  } finally {
+    transaction.close();
+  }
 }
 
 export async function getTodayBirthdayPeople(
@@ -546,6 +789,224 @@ export async function saveUserProfile(
       birthdayChanged,
       removedWishCount
     };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  } finally {
+    transaction.close();
+  }
+}
+
+export async function updateUid(
+  userId: string,
+  requestedUid: string
+): Promise<{ user: User; changed: boolean }> {
+  const uid = normalizeUid(requestedUid);
+  if (!isValidUid(uid)) {
+    throw new ProfileChangeError(
+      "UID 格式不正确，需为 6–16 位字母、数字或下划线",
+      {
+        status: 422,
+        code: "INVALID_UID",
+        fields: { uid: "UID 格式不正确" }
+      }
+    );
+  }
+
+  const db = await getDatabase();
+  const transaction = await db.transaction("write");
+  try {
+    const user = await findUserById(transaction, userId);
+    if (!user) {
+      throw new ProfileChangeError("没有找到你的资料", {
+        status: 404,
+        code: "USER_NOT_FOUND"
+      });
+    }
+    if (user.uid === uid) {
+      return { user, changed: false };
+    }
+    if (user.uidChangeCount >= 1) {
+      throw new ProfileChangeError("UID 只能修改 1 次，你已经使用过这次机会。", {
+        status: 429,
+        code: "UID_CHANGE_LIMIT_REACHED",
+        fields: { uid: "UID 修改机会已用完" }
+      });
+    }
+
+    const conflict = await transaction.execute({
+      sql: `SELECT 1 FROM users
+        WHERE id <> ? AND (uid = ? OR account = ? COLLATE NOCASE)
+        LIMIT 1`,
+      args: [userId, uid, uid]
+    });
+    if (conflict.rows.length > 0) {
+      throw new ProfileChangeError("这个 UID 已经被占用，请换一个", {
+        status: 409,
+        code: "UID_TAKEN",
+        fields: { uid: "这个 UID 已经被占用" }
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const updated = await transaction.execute({
+      sql: `UPDATE users
+        SET uid = ?, uid_change_count = uid_change_count + 1, updated_at = ?
+        WHERE id = ? AND uid_change_count < 1`,
+      args: [uid, nowIso, userId]
+    });
+    if (Number(updated.rowsAffected) === 0) {
+      throw new ProfileChangeError("UID 修改机会已用完", {
+        status: 429,
+        code: "UID_CHANGE_LIMIT_REACHED"
+      });
+    }
+
+    const updatedUser = await findUserById(transaction, userId);
+    await transaction.commit();
+    if (!updatedUser) throw new Error("更新 UID 后未找到用户");
+    return { user: updatedUser, changed: true };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  } finally {
+    transaction.close();
+  }
+}
+
+export async function bindUserEmail(
+  userId: string,
+  requestedEmail: string,
+  codeId: string
+): Promise<User> {
+  const email = normalizeEmail(requestedEmail);
+  const db = await getDatabase();
+  const transaction = await db.transaction("write");
+  try {
+    const user = await findUserById(transaction, userId);
+    if (!user) {
+      throw new ProfileChangeError("没有找到你的资料", {
+        status: 404,
+        code: "USER_NOT_FOUND"
+      });
+    }
+    if (user.email) {
+      throw new ProfileChangeError("这个账号已经绑定邮箱", {
+        status: 409,
+        code: "EMAIL_ALREADY_BOUND"
+      });
+    }
+    const conflict = await transaction.execute({
+      sql: "SELECT 1 FROM users WHERE email = ? AND id <> ? LIMIT 1",
+      args: [email, userId]
+    });
+    if (conflict.rows.length > 0) {
+      throw new ProfileChangeError("这个邮箱已经被使用", {
+        status: 409,
+        code: "EMAIL_TAKEN",
+        fields: { email: "这个邮箱已经被使用" }
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const consumed = await transaction.execute({
+      sql: `UPDATE email_codes
+        SET consumed_at = ?
+        WHERE id = ? AND purpose = 'bind' AND user_id = ?
+          AND email = ? AND consumed_at IS NULL AND expires_at > ?`,
+      args: [nowIso, codeId, userId, email, nowIso]
+    });
+    if (Number(consumed.rowsAffected) === 0) {
+      throw new ProfileChangeError("验证码已失效，请重新获取", {
+        status: 422,
+        code: "EMAIL_CODE_INVALID",
+        fields: { code: "验证码已失效，请重新获取" }
+      });
+    }
+
+    await transaction.execute({
+      sql: `UPDATE users
+        SET email = ?, email_verified_at = ?, updated_at = ?
+        WHERE id = ?`,
+      args: [email, nowIso, nowIso, userId]
+    });
+    const updatedUser = await findUserById(transaction, userId);
+    await transaction.commit();
+    if (!updatedUser) throw new Error("绑定邮箱后未找到用户");
+    return updatedUser;
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  } finally {
+    transaction.close();
+  }
+}
+
+export async function deleteUserAccount(
+  userId: string,
+  codeId: string
+): Promise<boolean> {
+  const db = await getDatabase();
+  const transaction = await db.transaction("write");
+  try {
+    const user = await findUserById(transaction, userId);
+    if (!user) {
+      throw new ProfileChangeError("没有找到你的资料", {
+        status: 404,
+        code: "USER_NOT_FOUND"
+      });
+    }
+    if (!user.email) {
+      throw new ProfileChangeError("请先绑定邮箱再注销账号", {
+        status: 409,
+        code: "EMAIL_REQUIRED"
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const consumed = await transaction.execute({
+      sql: `UPDATE email_codes
+        SET consumed_at = ?
+        WHERE id = ? AND purpose = 'delete' AND user_id = ?
+          AND email = ? AND consumed_at IS NULL AND expires_at > ?`,
+      args: [nowIso, codeId, userId, user.email, nowIso]
+    });
+    if (Number(consumed.rowsAffected) === 0) {
+      throw new ProfileChangeError("验证码已失效，请重新获取", {
+        status: 422,
+        code: "EMAIL_CODE_INVALID",
+        fields: { code: "验证码已失效，请重新获取" }
+      });
+    }
+
+    await transaction.batch([
+      {
+        sql: "DELETE FROM cake_cuts WHERE user_id = ?",
+        args: [userId]
+      },
+      {
+        sql: "DELETE FROM blessings WHERE sender_id = ? OR recipient_id = ?",
+        args: [userId, userId]
+      },
+      {
+        sql: "DELETE FROM change_quotas WHERE user_id = ?",
+        args: [userId]
+      },
+      {
+        sql: "DELETE FROM registration_events WHERE user_id = ? OR email = ?",
+        args: [userId, user.email]
+      },
+      {
+        sql: "DELETE FROM email_codes WHERE user_id = ? OR email = ?",
+        args: [userId, user.email]
+      },
+      {
+        sql: "DELETE FROM users WHERE id = ?",
+        args: [userId]
+      }
+    ]);
+    await transaction.commit();
+    return true;
   } catch (error) {
     await transaction.rollback();
     throw error;

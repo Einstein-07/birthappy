@@ -31,7 +31,7 @@ export default async function LoginPage({
           <p className="eyebrow">A QUIET PLACE FOR TODAY</p>
           <h1>欢迎回来。</h1>
           <p className="auth-panel__lede">
-            今天也有人在等一块蛋糕。回到你的小小宇宙，看看谁记得今天。
+            使用邮箱或 UID 登录。今天也有人在等一块蛋糕。
           </p>
           <AuthForm
             mode="login"

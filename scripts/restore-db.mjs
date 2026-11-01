@@ -33,7 +33,11 @@ try {
   process.exit(1);
 }
 
-const supportedFormats = ["birthappy-backup-v1", "birthappy-backup-v2"];
+const supportedFormats = [
+  "birthappy-backup-v1",
+  "birthappy-backup-v2",
+  "birthappy-backup-v3"
+];
 if (
   !supportedFormats.includes(backup?.format) ||
   !Array.isArray(backup.users) ||
@@ -111,34 +115,89 @@ try {
     )`
   );
 
+  // 兼容 v1/v2 备份：补齐新账号字段后再写入。
+  const userColumns = await database.client.execute(
+    "PRAGMA table_info(users)"
+  );
+  const existingColumns = new Set(
+    userColumns.rows.map((row) => String(row.name))
+  );
+  for (const [name, definition] of [
+    ["email", "email TEXT"],
+    ["email_verified_at", "email_verified_at TEXT"],
+    ["uid", "uid TEXT"],
+    ["uid_change_count", "uid_change_count INTEGER NOT NULL DEFAULT 0"]
+  ]) {
+    if (!existingColumns.has(name)) {
+      await database.client.execute(
+        `ALTER TABLE users ADD COLUMN ${definition}`
+      );
+    }
+  }
+  await database.client.batch(
+    [
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+        ON users (email) WHERE email IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid_unique
+        ON users (uid) WHERE uid IS NOT NULL`
+    ],
+    "write"
+  );
+
+  const tableRows = await database.client.execute(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('email_codes', 'registration_events')`
+  );
+  const optionalTables = new Set(
+    tableRows.rows.map((row) => String(row.name))
+  );
+
   const transaction = await database.client.transaction("write");
   try {
-    await transaction.batch([
+    const deletes = [
       "DELETE FROM cake_cuts",
       "DELETE FROM blessings",
-      "DELETE FROM change_quotas",
-      "DELETE FROM users"
-    ]);
+      "DELETE FROM change_quotas"
+    ];
+    if (optionalTables.has("email_codes")) {
+      deletes.push("DELETE FROM email_codes");
+    }
+    if (optionalTables.has("registration_events")) {
+      deletes.push("DELETE FROM registration_events");
+    }
+    deletes.push("DELETE FROM users");
+    await transaction.batch(deletes);
 
-    const userStatements = backup.users.map((user) => ({
-      sql: `INSERT INTO users
-        (id, account, password_hash, name, bio, birthday, is_anonymous,
-         avatar, avatar_mime, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        user.id,
-        user.account,
-        user.password_hash,
-        user.name,
-        user.bio ?? "",
-        user.birthday,
-        Number(user.is_anonymous) === 1 ? 1 : 0,
-        avatarBytes(user.avatar_base64),
-        user.avatar_mime ?? null,
-        user.created_at,
-        user.updated_at
-      ]
-    }));
+    const userStatements = backup.users.map((user, index) => {
+      const isV3 = backup.format === "birthappy-backup-v3";
+      const fallbackUid = `BH${String(index + 1).padStart(8, "0")}`;
+      const uid = isV3 && user.uid ? String(user.uid) : fallbackUid;
+      return {
+        sql: `INSERT INTO users
+          (id, account, password_hash, name, bio, birthday, is_anonymous,
+           avatar, avatar_mime, email, email_verified_at, uid,
+           uid_change_count, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          user.id,
+          user.account,
+          user.password_hash,
+          user.name,
+          user.bio ?? "",
+          user.birthday,
+          Number(user.is_anonymous) === 1 ? 1 : 0,
+          avatarBytes(user.avatar_base64),
+          user.avatar_mime ?? null,
+          user.email ?? null,
+          user.email_verified_at ?? null,
+          uid,
+          Number(user.uid_change_count ?? 0),
+          user.created_at,
+          user.updated_at
+        ]
+      };
+    });
 
     const blessingStatements = backup.blessings.map((blessing) => ({
       sql: `INSERT INTO blessings

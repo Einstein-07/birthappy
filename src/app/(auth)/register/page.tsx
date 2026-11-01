@@ -5,6 +5,7 @@ import { AuthScene } from "@/components/AuthScene";
 import { safeNextPath } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { getToday } from "@/lib/birthday";
+import { createFormToken } from "@/lib/form-token";
 
 export const dynamic = "force-dynamic";
 
@@ -31,12 +32,13 @@ export default async function RegisterPage({
           <p className="eyebrow">A SMALL DAY, KEPT SAFELY</p>
           <h1>把你的生日，<br />留在这里。</h1>
           <p className="auth-panel__lede">
-            只用一分钟。之后，你可以慢慢补充头像和简介。
+            用常用邮箱完成验证。之后，你可以慢慢补充头像和简介。
           </p>
           <AuthForm
             mode="register"
             nextPath={nextPath}
             todayIso={getToday().iso}
+            formToken={createFormToken("register")}
           />
         </div>
       </section>

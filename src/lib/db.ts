@@ -1,4 +1,5 @@
 import type { Client } from "@libsql/client";
+import { generateUid, legacyUidCandidate } from "@/lib/uid";
 
 const DEFAULT_DATABASE_URL = "file:./data/birthhappy.db";
 
@@ -36,6 +37,54 @@ async function createDatabaseClient(): Promise<Client> {
   return createClient({ url, authToken, intMode: "number" });
 }
 
+async function ensureUserColumns(client: Client) {
+  const result = await client.execute("PRAGMA table_info(users)");
+  const existing = new Set(result.rows.map((row) => String(row.name)));
+  const additions = [
+    ["email", "email TEXT"],
+    ["email_verified_at", "email_verified_at TEXT"],
+    ["uid", "uid TEXT"],
+    [
+      "uid_change_count",
+      "uid_change_count INTEGER NOT NULL DEFAULT 0"
+    ]
+  ] as const;
+
+  for (const [name, definition] of additions) {
+    if (existing.has(name)) continue;
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN ${definition}`);
+    } catch (error) {
+      const check = await client.execute("PRAGMA table_info(users)");
+      const nowExists = check.rows.some((row) => String(row.name) === name);
+      if (!nowExists) throw error;
+    }
+  }
+}
+
+async function backfillLegacyUids(client: Client) {
+  const result = await client.execute(
+    "SELECT id, account FROM users WHERE uid IS NULL OR uid = '' ORDER BY created_at ASC"
+  );
+
+  for (const row of result.rows) {
+    let candidate = legacyUidCandidate(String(row.account)) ?? generateUid();
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const conflict = await client.execute({
+        sql: "SELECT id FROM users WHERE uid = ? AND id <> ? LIMIT 1",
+        args: [candidate, row.id]
+      });
+      if (conflict.rows.length === 0) break;
+      candidate = generateUid();
+    }
+
+    await client.execute({
+      sql: "UPDATE users SET uid = ? WHERE id = ? AND (uid IS NULL OR uid = '')",
+      args: [candidate, row.id]
+    });
+  }
+}
+
 async function initializeSchema(client: Client) {
   await client.batch(
     [
@@ -49,6 +98,10 @@ async function initializeSchema(client: Client) {
         is_anonymous INTEGER NOT NULL DEFAULT 0 CHECK (is_anonymous IN (0, 1)),
         avatar BLOB,
         avatar_mime TEXT,
+        email TEXT,
+        email_verified_at TEXT,
+        uid TEXT,
+        uid_change_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )`,
@@ -85,6 +138,53 @@ async function initializeSchema(client: Client) {
         used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0),
         updated_at TEXT NOT NULL,
         PRIMARY KEY (user_id, kind, period)
+      )`
+    ],
+    "write"
+  );
+
+  await ensureUserColumns(client);
+  await backfillLegacyUids(client);
+
+  await client.batch(
+    [
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+        ON users (email) WHERE email IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid_unique
+        ON users (uid) WHERE uid IS NOT NULL`,
+      `CREATE TABLE IF NOT EXISTS email_codes (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        user_id TEXT,
+        purpose TEXT NOT NULL CHECK (purpose IN ('register', 'bind', 'delete')),
+        code_hash TEXT NOT NULL,
+        ip_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_email_codes_email
+        ON email_codes (email, purpose, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_email_codes_ip
+        ON email_codes (ip_hash, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_email_codes_user
+        ON email_codes (user_id, purpose, created_at)`,
+      `CREATE TABLE IF NOT EXISTS registration_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        ip_hash TEXT NOT NULL,
+        day TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_registration_events_ip_day
+        ON registration_events (ip_hash, day)`,
+      `CREATE INDEX IF NOT EXISTS idx_registration_events_user
+        ON registration_events (user_id)`,
+      `CREATE TABLE IF NOT EXISTS daily_registration_counters (
+        day TEXT PRIMARY KEY,
+        used INTEGER NOT NULL DEFAULT 0 CHECK (used >= 0)
       )`
     ],
     "write"

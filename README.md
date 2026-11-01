@@ -19,7 +19,14 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 - **纯黑默认头像**：没有上传头像时显示纯黑圆形；简介为空时首页完全不渲染简介区域。
 - **切蛋糕**：一次性回应所有尚未回应的祝福，并给每位祝福者回赠一块蛋糕；回礼会记入对方的「收到祝福」。
 - **祝福统计**：总览收到的全部祝福，支持按自然年细分，同时区分生日蛋糕与回礼。
-- **完整账号体系**：注册、登录、退出；bcrypt 密码哈希、HttpOnly 签名 Cookie、同源校验、参数化 SQL。
+- **邮箱验证码注册**：使用 QQ 邮箱 SMTP 发送验证码；10 分钟有效、一次性使用、最多尝试 5 次。注册页明确提示发件邮箱和垃圾邮件风险。
+- **邮箱 / UID 登录**：bcrypt 密码哈希、HttpOnly 签名 Cookie、同源校验、参数化 SQL；旧账号可在绑定邮箱前过渡登录。
+- **UID**：注册后系统生成 UID，可修改一次；页面显示剩余次数，旧 UID 修改后立即失效。
+- **每日注册上限**：北京时间每日最多 100 位；同一网络每日最多 5 位；验证码发送按邮箱、IP、全站限流。
+- **基础反爬**：数据库限流、服务端签名表单时间令牌、隐藏蜜罐字段和邮箱归属验证。
+- **账号其他功能**：「我 → 其他」提供联系我们、隐私协议和邮箱验证后注销账号；注销会删除全部关联数据并回收 UID。
+- **敏感词过滤**：称呼/简介实时预检并禁用提交，后端独立二次校验；覆盖 Unicode 规范化、拼音/数字替代和去符号变体。
+- **页脚统计**：小字显示注册用户总数和语义化版本号。
 - **视觉与响应式**：奶油白与炭黑配色、中文衬线标题、轻柔动效、移动端适配、键盘焦点与减少动态效果支持。
 - **零对象存储**：头像在浏览器端裁切压缩，存入数据库，由专用缓存接口返回。
 - **零配置本地开发**：默认使用本地 SQLite 文件，生产切换 Turso 即可。
@@ -39,7 +46,8 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 | 样式 | 原生 CSS（`src/app/globals.css`），无 UI 框架 |
 | 数据库 | libSQL / SQLite，生产使用 Turso |
 | 鉴权 | jose JWT + HttpOnly Cookie，bcryptjs 密码哈希 |
-| 部署 | Vercel / Netlify 免费额度 + Turso 免费额度 |
+| 邮件 | Nodemailer + QQ 邮箱 SMTP（验证码） |
+| 部署 | Netlify 免费额度 + Turso 免费额度 |
 
 ## 本地启动
 
@@ -60,13 +68,15 @@ npm run seed
 
 会写入 5 个本地区域演示账号，统一密码为 `birthhappy123`：
 
-| 账号 | 角色 |
+| 邮箱 / UID | 角色 |
 | --- | --- |
-| `xiaoman` | 今天生日，有 4 份历史祝福、2 份待回应，可体验切蛋糕 |
-| `yuan` | 今天生日，有头像 |
-| `acheng` | 今天生日，匿名、无头像、简介为空，用于验证边界展示 |
-| `zhiyao` | 非今日生日，可用于给他人送蛋糕 |
-| `nan` | 非今日生日 |
+| `xiaoman@example.com` / `XIAOMAN` | 今天生日，有 4 份历史祝福、2 份待回应，可体验切蛋糕 |
+| `yuan@example.com` / `YUAN2026` | 今天生日，有头像 |
+| `acheng@example.com` / `ACHENG` | 今天生日，匿名、无头像、简介为空，用于验证边界展示 |
+| `zhiyao@example.com` / `ZHIYAO` | 非今日生日，可用于给他人送蛋糕 |
+| `nan@example.com` / `NANYU` | 非今日生日 |
+
+> 演示邮箱为 `example.com`，不会真正收信；邮箱验证码注册需要在环境中配置有效的 QQ SMTP 后才能测试。
 
 > `seed` 默认只会写入 `file:` 本地数据库；若目标是远程数据库，脚本会拒绝执行。请勿把演示数据写入正式环境。
 
@@ -78,8 +88,17 @@ npm run seed
 | --- | --- | --- |
 | `TURSO_DATABASE_URL` | 生产必填 | Turso 数据库 URL，例如 `libsql://xxx.turso.io` |
 | `TURSO_AUTH_TOKEN` | 生产必填 | Turso 数据库访问令牌 |
-| `AUTH_SECRET` | 生产必填 | 至少 32 位随机字符串，用于签名登录 Cookie；缺失时无法签发会话 |
+| `AUTH_SECRET` | 生产必填 | 至少 32 位随机字符串，用于签名登录 Cookie、验证码和表单令牌；缺失时相关逻辑拒绝工作 |
 | `AUTH_COOKIE_SECURE` | 否 | 仅供本机用 HTTP 跑生产构建时设为 `false`；线上不要设置 |
+| `MAIL_USER` | 生产必填 | QQ 发件邮箱 `2597530663@qq.com` |
+| `MAIL_PASS` | 生产必填 | QQ 邮箱 SMTP 授权码；不是 QQ 登录密码，只放在环境变量，不提交仓库 |
+| `MAIL_HOST` | 否 | 默认 `smtp.qq.com` |
+| `MAIL_PORT` | 否 | 默认 `465` |
+| `MAIL_SECURE` | 否 | 默认 `true`（465 端口 SSL） |
+| `MAIL_FROM_NAME` | 否 | 发件人显示名，默认 `BirtHappy` |
+| `BACKUP_TOKEN` | 可选 | 生产备份下载接口令牌，至少 32 位；不配置时接口返回 404 |
+
+QQ 邮箱需在网页版设置中开启 SMTP 服务并生成授权码。授权码失效、账号异常或未开启服务时，验证码接口会返回明确错误；不会把明文验证码写入日志。
 
 ## 常用命令
 
@@ -104,7 +123,12 @@ npm run restore -- <备份文件.json> --force  # 从备份恢复
 - 资料修改额度按北京时间自然月计算；注册计入当月第 1 次，同一保存即使同时改三项也只计 1 次，无变化保存和匿名切换不计次。
 - 修改生日后，收到的全部生日祝福被移除，收到的切蛋糕回礼保留；生日修改共 3 次，服务端强制二次确认。
 - 游客可以浏览首页，但送蛋糕、切蛋糕与编辑资料必须登录。
-- 页脚版权署名：`© 年份 绛河 · BirtHappy`。
+- 注册必须完成邮箱验证码验证并勾选隐私协议；每日最多新增 100 位注册用户。
+- 登录使用邮箱或 UID；UID 只允许修改 1 次，修改后旧 UID 立即失效。
+- 注销账号必须通过当前邮箱验证码；注销后 UID 回收，所有关联数据删除。
+- 称呼/简介命中敏感词时，前端实时警告并禁用提交，后端仍会返回 422 二次拒绝。
+- 页脚版权署名：`© 年份 绛河 · BirtHappy`；另以小字显示注册人数和语义化版本。
+- 版本规则见 [版本规范](docs/版本规范.md)，当前版本 `v2.0.0`。
 
 完整产品规则与验收条件见 [需求文档](docs/需求文档.md)。
 
@@ -122,7 +146,7 @@ npm run restore -- <备份文件.json> --force  # 从备份恢复
 npm run backup
 ```
 
-备份文件默认写入 `backups/`，包含用户资料、密码哈希、头像、祝福、切蛋糕记录和修改额度。该目录已被 `.gitignore` 排除，**不要上传到公开位置**。
+备份文件默认写入 `backups/`，格式为 `birthappy-backup-v3`，包含用户邮箱、UID、密码哈希、资料、头像、祝福、切蛋糕记录和修改额度。短命的邮箱验证码、注册限流事件和每日计数器不进入备份。该目录已被 `.gitignore` 排除，**不要上传到公开位置**。
 
 如果本地网络无法连接 Turso，可在 Netlify 配置 `BACKUP_TOKEN`，通过受保护的 `/api/admin/backup` 接口从 Netlify 服务器下载生产备份。详细命令见[维护手册](docs/维护手册.md)。
 
@@ -140,45 +164,46 @@ npm run restore -- "backups\你的备份文件.json" --force
 ```text
 src/
   app/
-    (main)/              # 带主导航的页面：首页、我
-    (auth)/              # 登录、注册
-    api/                 # 注册/登录/退出、资料、祝福、切蛋糕、头像
+    (main)/              # 带主导航的页面：首页、我、隐私协议
+    (auth)/              # 登录、注册、绑定邮箱
+    api/                 # 注册/登录/验证码/UID/注销/资料/祝福/头像/备份
     globals.css          # 全站视觉与响应式
-  components/            # 导航、列表、表单、统计、切蛋糕、Toast 等
-  lib/                   # 数据库、会话、生日规则、校验、数据访问
+  components/            # 导航、表单、验证码、UID、其他栏、统计、Toast 等
+  lib/                   # 数据库、会话、邮件、验证码、敏感词、校验、数据访问
 scripts/
   seed-demo.mjs          # 本地演示数据
-  generate-demo-avatars.py
+  backup-db.mjs          # v3 备份
+  restore-db.mjs         # 兼容 v1/v2/v3 恢复
 docs/
   需求文档.md
-  部署指南.md
+  版本规范.md
   Netlify部署指南.md
   维护手册.md
   用量与容量.md
   screenshots/
+CHANGELOG.md
 ```
 
 ## 部署到公网
 
-- 海外访问或已有稳定代理：见 **[Vercel 免费部署指南](docs/部署指南.md)**。
-- 国内网络优先：见 **[Netlify 免费部署指南](docs/Netlify部署指南.md)**。
+国内网络优先使用 Netlify，详见 **[Netlify 免费部署指南](docs/Netlify部署指南.md)**。Netlify 新项目默认是 Private，部署成功后还需要在 `Project configuration → General → Visitor access` 把 Production 改成 **Public**，否则匿名访问会返回 401。
 
-两个平台共用同一个 Turso 数据库。Netlify 新项目默认是 Private，部署成功后还需要在 `Project configuration → General → Visitor access` 把 Production 改成 **Public**，否则匿名访问会返回 401。简要流程：
+简要流程：
 
 1. 将代码推送到 GitHub。
 2. 在 [Turso](https://turso.tech) 创建免费数据库，取得 URL 与 Token。
-3. 在 [Netlify](https://app.netlify.com) 或 [Vercel](https://vercel.com/new) 导入仓库。
-4. 配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`。
-5. 部署完成后访问平台提供的免费域名。
+3. 在 [Netlify](https://app.netlify.com) 导入仓库。
+4. 配置 `TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`、`AUTH_SECRET`、`MAIL_USER`、`MAIL_PASS`；需要生产备份下载时再配置 `BACKUP_TOKEN`。
+5. 部署完成后访问 Netlify 域名，检查页脚版本、注册验证码和旧账号迁移。
 
 ## 已知边界
 
 当前定位是朋友间的小型生日应用，暂不包含：
 
-- 找回密码、修改密码、注销账号。
-- 邮箱/手机号与验证码。
+- 自助找回密码、修改密码和人工申诉后台。
+- 手机号登录、第三方登录、多设备管理。
 - 评论、私信、关注、推送通知。
-- 内容审核与举报后台。
+- 内容举报后台与人工审核队列（仅做基础敏感词过滤）。
 - 多时区选择（统一按北京时间）。
 
-如需公开运营，请先补充账号恢复、滥用防护、内容安全与隐私政策。
+公开运营前仍建议补充：可靠的事务邮件服务、监控告警、备份异地保存、账号恢复流程和更完整的内容安全策略。QQ SMTP 授权码必须有效；当前生产配置前，邮箱注册会返回明确的服务未就绪提示。

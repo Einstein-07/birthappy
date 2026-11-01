@@ -16,6 +16,7 @@ import {
 } from "@/components/Icons";
 import { useToast } from "@/components/Toast";
 import { formatBirthdayFull } from "@/lib/birthday";
+import { sensitiveWarning } from "@/lib/sensitive-words";
 import type {
   ChangeQuotaState,
   ProfileSaveResult,
@@ -162,6 +163,9 @@ export function ProfileEditor({
   const profileLocked = quota.profile.remaining <= 0;
   const birthdayLocked = quota.birthday.remaining <= 0;
   const bioLength = countCharacters(bio);
+  const nameSensitive = name.trim() ? sensitiveWarning(name) : null;
+  const bioSensitive = bio.trim() ? sensitiveWarning(bio) : null;
+  const submitBlocked = Boolean(nameSensitive || bioSensitive);
   const previewName = isAnonymous ? "匿名的朋友" : name.trim() || "你的称呼";
   const previewBio = bio.trim();
   const previewAvatarAlt = avatarSrc ? `${previewName}的头像预览` : "";
@@ -254,8 +258,11 @@ export function ProfileEditor({
     if (!name.trim()) nextErrors.name = "请填写一个称呼";
     else if (countCharacters(name.trim()) > 24) {
       nextErrors.name = "称呼最多 24 个字符";
+    } else if (nameSensitive) {
+      nextErrors.name = nameSensitive.message;
     }
     if (bioLength > 160) nextErrors.bio = "简介最多 160 个字符";
+    else if (bioSensitive) nextErrors.bio = bioSensitive.message;
     if (!birthday) nextErrors.birthday = "请选择生日";
     else if (birthday > todayIso) nextErrors.birthday = "生日不能晚于今天";
 
@@ -479,7 +486,7 @@ export function ProfileEditor({
               </div>
               <input
                 id="profile-name"
-                className={`text-input${errors.name ? " has-error" : ""}`}
+                className={`text-input${errors.name || nameSensitive ? " has-error" : ""}`}
                 type="text"
                 value={name}
                 onChange={(event) => {
@@ -490,10 +497,16 @@ export function ProfileEditor({
                 maxLength={24}
                 autoComplete="nickname"
                 disabled={profileLocked}
-                aria-invalid={Boolean(errors.name)}
-                aria-describedby={errors.name ? "profile-name-error" : undefined}
+                aria-invalid={Boolean(errors.name || nameSensitive)}
+                aria-describedby={
+                  errors.name || nameSensitive ? "profile-name-error" : undefined
+                }
               />
-              {errors.name ? (
+              {nameSensitive ? (
+                <p className="sensitive-warning" id="profile-name-error">
+                  {nameSensitive.message}
+                </p>
+              ) : errors.name ? (
                 <p className="field__error" id="profile-name-error">
                   {errors.name}
                 </p>
@@ -571,7 +584,7 @@ export function ProfileEditor({
           </div>
           <textarea
             id="profile-bio"
-            className={`text-input text-area${errors.bio ? " has-error" : ""}`}
+            className={`text-input text-area${errors.bio || bioSensitive ? " has-error" : ""}`}
             value={bio}
             onChange={(event) => {
               setBio(event.target.value);
@@ -581,10 +594,16 @@ export function ProfileEditor({
             rows={3}
             maxLength={160}
             disabled={profileLocked}
-            aria-invalid={Boolean(errors.bio)}
-            aria-describedby={errors.bio ? "profile-bio-error" : "profile-bio-hint"}
+            aria-invalid={Boolean(errors.bio || bioSensitive)}
+            aria-describedby={
+              errors.bio || bioSensitive ? "profile-bio-error" : "profile-bio-hint"
+            }
           />
-          {errors.bio ? (
+          {bioSensitive ? (
+            <p className="sensitive-warning" id="profile-bio-error">
+              {bioSensitive.message}
+            </p>
+          ) : errors.bio ? (
             <p className="field__error" id="profile-bio-error">
               {errors.bio}
             </p>
@@ -675,7 +694,7 @@ export function ProfileEditor({
           <button
             className="button button--primary"
             type="submit"
-            disabled={saving || preparingAvatar}
+            disabled={saving || preparingAvatar || submitBlocked}
           >
             {saving ? (
               <>

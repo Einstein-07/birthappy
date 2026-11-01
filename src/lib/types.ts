@@ -1,6 +1,10 @@
 export type User = {
   id: string;
   account: string;
+  email: string | null;
+  emailVerifiedAt: string | null;
+  uid: string;
+  uidChangeCount: number;
   name: string;
   bio: string;
   birthday: string;

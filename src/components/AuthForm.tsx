@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { EmailCodeField } from "@/components/EmailCodeField";
 import { ArrowIcon, SparkIcon } from "@/components/Icons";
+import { sensitiveWarning } from "@/lib/sensitive-words";
 
 type AuthMode = "login" | "register";
 type FieldErrors = Record<string, string>;
@@ -11,48 +13,68 @@ type FieldErrors = Record<string, string>;
 export function AuthForm({
   mode,
   nextPath,
-  todayIso
+  todayIso,
+  formToken = ""
 }: {
   mode: AuthMode;
   nextPath: string;
   todayIso: string;
+  formToken?: string;
 }) {
   const router = useRouter();
-  const [account, setAccount] = useState("");
+  const isRegister = mode === "register";
+  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [birthday, setBirthday] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const [website, setWebsite] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
   const [generalError, setGeneralError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const isRegister = mode === "register";
+  const nameWarning = isRegister && name.trim()
+    ? sensitiveWarning(name)
+    : null;
+  const submitBlocked = Boolean(nameWarning);
 
   function validate() {
     const nextErrors: FieldErrors = {};
-    if (!account.trim()) {
-      nextErrors.account = "请填写登录账号";
-    } else if (!/^[A-Za-z0-9_]{3,24}$/.test(account.trim())) {
-      nextErrors.account = "账号需为 3–24 位字母、数字或下划线";
-    }
-
-    if (!password) {
-      nextErrors.password = "请填写密码";
-    } else if (password.length < 8) {
-      nextErrors.password = "密码至少需要 8 个字符";
-    }
 
     if (isRegister) {
+      if (!email.trim()) {
+        nextErrors.email = "请填写邮箱";
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
+        nextErrors.email = "请输入有效的邮箱地址";
+      }
+      if (!/^\d{6}$/.test(code)) {
+        nextErrors.code = "请输入 6 位邮箱验证码";
+      }
       if (!name.trim()) {
         nextErrors.name = "请填写一个称呼";
       } else if (Array.from(name.trim()).length > 24) {
         nextErrors.name = "称呼最多 24 个字符";
+      } else if (nameWarning) {
+        nextErrors.name = nameWarning.message;
       }
       if (!birthday) {
         nextErrors.birthday = "请选择生日";
       } else if (birthday > todayIso) {
         nextErrors.birthday = "生日不能晚于今天";
       }
+      if (!agreed) {
+        nextErrors.agreement = "请先阅读并同意隐私协议";
+      }
+    } else if (!identifier.trim()) {
+      nextErrors.identifier = "请填写邮箱或 UID";
+    }
+
+    if (!password) {
+      nextErrors.password = "请填写密码";
+    } else if (password.length < 8) {
+      nextErrors.password = "密码至少需要 8 个字符";
     }
 
     setErrors(nextErrors);
@@ -62,6 +84,7 @@ export function AuthForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setGeneralError("");
+    if (submitBlocked) return;
     if (!validate()) return;
 
     setLoading(true);
@@ -73,24 +96,38 @@ export function AuthForm({
         body: JSON.stringify(
           isRegister
             ? {
-                account: account.trim(),
+                email: email.trim(),
+                code,
                 password,
                 name: name.trim(),
-                birthday
+                birthday,
+                agreed,
+                website,
+                formToken
               }
-            : { account: account.trim(), password }
+            : { identifier: identifier.trim(), password }
         )
       });
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string; fields?: FieldErrors }
+        | {
+            error?: string;
+            fields?: FieldErrors;
+            needsEmailBinding?: boolean;
+          }
         | null;
 
       if (!response.ok) {
         if (payload?.fields) setErrors(payload.fields);
         setGeneralError(
           payload?.error ||
-            (isRegister ? "暂时无法完成注册" : "账号或密码不正确")
+            (isRegister ? "暂时无法完成注册" : "邮箱、UID 或密码不正确")
         );
+        return;
+      }
+
+      if (!isRegister && payload?.needsEmailBinding) {
+        router.replace("/bind-email");
+        router.refresh();
         return;
       }
 
@@ -116,6 +153,48 @@ export function AuthForm({
         <>
           <div className="field">
             <div className="field__label-row">
+              <label className="field__label" htmlFor="auth-email">
+                邮箱
+              </label>
+              <span className="field__hint">用于登录和找回账号</span>
+            </div>
+            <input
+              id="auth-email"
+              className={`text-input${errors.email ? " has-error" : ""}`}
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="name@example.com"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={254}
+              aria-invalid={Boolean(errors.email)}
+              aria-describedby={errors.email ? "auth-email-error" : undefined}
+            />
+            {errors.email ? (
+              <p className="field__error" id="auth-email-error">
+                {errors.email}
+              </p>
+            ) : null}
+          </div>
+
+          <EmailCodeField
+            email={email}
+            purpose="register"
+            code={code}
+            onCodeChange={setCode}
+            disabled={loading}
+            website={website}
+          />
+          {errors.code ? (
+            <p className="field__error" style={{ marginTop: "-10px" }}>
+              {errors.code}
+            </p>
+          ) : null}
+
+          <div className="field">
+            <div className="field__label-row">
               <label className="field__label" htmlFor="auth-name">
                 你的称呼
               </label>
@@ -123,17 +202,23 @@ export function AuthForm({
             </div>
             <input
               id="auth-name"
-              className={`text-input${errors.name ? " has-error" : ""}`}
+              className={`text-input${errors.name || nameWarning ? " has-error" : ""}`}
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="可填写昵称或真实姓名"
               maxLength={24}
               autoComplete="nickname"
-              aria-invalid={Boolean(errors.name)}
-              aria-describedby={errors.name ? "auth-name-error" : undefined}
+              aria-invalid={Boolean(errors.name || nameWarning)}
+              aria-describedby={
+                errors.name || nameWarning ? "auth-name-error" : undefined
+              }
             />
-            {errors.name ? (
+            {nameWarning ? (
+              <p className="sensitive-warning" id="auth-name-error">
+                {nameWarning.message}
+              </p>
+            ) : errors.name ? (
               <p className="field__error" id="auth-name-error">
                 {errors.name}
               </p>
@@ -167,70 +252,141 @@ export function AuthForm({
               </p>
             ) : null}
           </div>
-        </>
-      ) : null}
 
-      <div className="field">
-        <div className="field__label-row">
-          <label className="field__label" htmlFor="auth-account">
-            登录账号
+          <div className="field">
+            <div className="field__label-row">
+              <label className="field__label" htmlFor="auth-password">
+                密码
+              </label>
+              <span className="field__hint">至少 8 个字符</span>
+            </div>
+            <input
+              id="auth-password"
+              className={`text-input${errors.password ? " has-error" : ""}`}
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="为今天留一把小钥匙"
+              maxLength={72}
+              autoComplete="new-password"
+              aria-invalid={Boolean(errors.password)}
+              aria-describedby={
+                errors.password ? "auth-password-error" : undefined
+              }
+            />
+            {errors.password ? (
+              <p className="field__error" id="auth-password-error">
+                {errors.password}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="honeypot" aria-hidden="true">
+            <label htmlFor="auth-company-fax">公司传真（请勿填写）</label>
+            <input
+              id="auth-company-fax"
+              name="bh_hp"
+              type="text"
+              tabIndex={-1}
+              autoComplete="off"
+              value={website}
+              onChange={(event) => setWebsite(event.target.value)}
+            />
+          </div>
+
+          <label className={`agreement-row${errors.agreement ? " has-error" : ""}`}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(event) => setAgreed(event.target.checked)}
+            />
+            <span>
+              我已阅读并同意
+              <Link href="/privacy" target="_blank" rel="noreferrer">
+                《隐私协议》
+              </Link>
+            </span>
           </label>
-          {isRegister ? (
-            <span className="field__hint">字母、数字或下划线</span>
+          {errors.agreement ? (
+            <p className="field__error" style={{ marginTop: "-8px" }}>
+              {errors.agreement}
+            </p>
           ) : null}
-        </div>
-        <input
-          id="auth-account"
-          className={`text-input${errors.account ? " has-error" : ""}`}
-          type="text"
-          value={account}
-          onChange={(event) => setAccount(event.target.value)}
-          placeholder={isRegister ? "例如：xiaoman_07" : "输入你的账号"}
-          maxLength={24}
-          autoComplete="username"
-          autoCapitalize="none"
-          spellCheck={false}
-          aria-invalid={Boolean(errors.account)}
-          aria-describedby={errors.account ? "auth-account-error" : undefined}
-        />
-        {errors.account ? (
-          <p className="field__error" id="auth-account-error">
-            {errors.account}
-          </p>
-        ) : null}
-      </div>
 
-      <div className="field">
-        <div className="field__label-row">
-          <label className="field__label" htmlFor="auth-password">
-            密码
-          </label>
-          <span className="field__hint">
-            {isRegister ? "至少 8 个字符" : "请妥善保存"}
-          </span>
-        </div>
-        <input
-          id="auth-password"
-          className={`text-input${errors.password ? " has-error" : ""}`}
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          placeholder={isRegister ? "为今天留一把小钥匙" : "输入密码"}
-          maxLength={72}
-          autoComplete={isRegister ? "new-password" : "current-password"}
-          aria-invalid={Boolean(errors.password)}
-          aria-describedby={
-            errors.password ? "auth-password-error" : undefined
-          }
-        />
-        {errors.password ? (
-          <p className="field__error" id="auth-password-error">
-            {errors.password}
+          <p className="auth-form__limit-note">
+            每日最多新增 100 位注册用户。若名额已满，请次日再试。
           </p>
-        ) : null}
-      </div>
+        </>
+      ) : (
+        <>
+          <div className="field">
+            <div className="field__label-row">
+              <label className="field__label" htmlFor="auth-identifier">
+                邮箱或 UID
+              </label>
+            </div>
+            <input
+              id="auth-identifier"
+              className={`text-input${errors.identifier ? " has-error" : ""}`}
+              type="text"
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
+              placeholder="name@example.com 或 BHXXXXXXXX"
+              maxLength={254}
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              aria-invalid={Boolean(errors.identifier)}
+              aria-describedby={
+                errors.identifier ? "auth-identifier-error" : undefined
+              }
+            />
+            {errors.identifier ? (
+              <p className="field__error" id="auth-identifier-error">
+                {errors.identifier}
+              </p>
+            ) : null}
+          </div>
 
-      <button className="button button--primary auth-submit" type="submit" disabled={loading}>
+          <div className="field">
+            <div className="field__label-row">
+              <label className="field__label" htmlFor="auth-password">
+                密码
+              </label>
+              <span className="field__hint">请妥善保存</span>
+            </div>
+            <input
+              id="auth-password"
+              className={`text-input${errors.password ? " has-error" : ""}`}
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="输入密码"
+              maxLength={72}
+              autoComplete="current-password"
+              aria-invalid={Boolean(errors.password)}
+              aria-describedby={
+                errors.password ? "auth-password-error" : undefined
+              }
+            />
+            {errors.password ? (
+              <p className="field__error" id="auth-password-error">
+                {errors.password}
+              </p>
+            ) : null}
+          </div>
+
+          <p className="auth-form__legacy-note">
+            2026 年 11 月之前注册的旧账号，可先用原账号名登录，随后会引导绑定邮箱。
+          </p>
+        </>
+      )}
+
+      <button
+        className="button button--primary auth-submit"
+        type="submit"
+        disabled={loading || submitBlocked}
+      >
         {loading ? (
           <>
             <span className="button-spinner" aria-hidden="true" />
@@ -238,7 +394,7 @@ export function AuthForm({
           </>
         ) : (
           <>
-            {isRegister ? "留下我的生日" : "回到我的小小宇宙"}
+            {isRegister ? "用邮箱留下我的生日" : "回到我的小小宇宙"}
             <ArrowIcon className="button__icon" />
           </>
         )}
@@ -256,7 +412,7 @@ export function AuthForm({
           <>
             还没有账号？
             <Link href={`/register?next=${encodeURIComponent(nextPath)}`}>
-              写下一个生日
+              用邮箱注册
             </Link>
           </>
         )}
@@ -266,7 +422,7 @@ export function AuthForm({
         <SparkIcon aria-hidden="true" />
         {isRegister
           ? "生日年份只用于保存日期，不会公开展示，也不显示年龄。"
-          : "这是一个轻而安静的地方，只记得今天。"}
+          : "这里只记得今天，也只展示今天过生日的人。"}
       </p>
     </form>
   );

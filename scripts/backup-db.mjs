@@ -34,7 +34,8 @@ try {
   ] = await Promise.all([
       database.client.execute(
         `SELECT id, account, password_hash, name, bio, birthday,
-                is_anonymous, avatar, avatar_mime, created_at, updated_at
+                is_anonymous, avatar, avatar_mime, email, email_verified_at,
+                uid, uid_change_count, created_at, updated_at
          FROM users
          ORDER BY created_at ASC, id ASC`
       ),
@@ -73,6 +74,10 @@ try {
     is_anonymous: row.is_anonymous,
     avatar_base64: blobToBase64(row.avatar),
     avatar_mime: row.avatar_mime,
+    email: row.email ?? null,
+    email_verified_at: row.email_verified_at ?? null,
+    uid: row.uid ?? null,
+    uid_change_count: row.uid_change_count ?? 0,
     created_at: row.created_at,
     updated_at: row.updated_at
   }));
@@ -104,8 +109,8 @@ try {
   }));
 
   const payload = {
-    format: "birthappy-backup-v2",
-    schemaVersion: 2,
+    format: "birthappy-backup-v3",
+    schemaVersion: 3,
     createdAt: new Date().toISOString(),
     source: database.source,
     counts: {

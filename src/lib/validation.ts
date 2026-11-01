@@ -1,4 +1,10 @@
 import { getToday, isValidBirthday } from "@/lib/birthday";
+import {
+  isDisposableEmail,
+  isValidEmail,
+  normalizeEmail
+} from "@/lib/email";
+import { sensitiveWarning } from "@/lib/sensitive-words";
 import type { ApiFieldErrors } from "@/lib/types";
 
 const MAX_AVATAR_BYTES = 512 * 1024;
@@ -10,7 +16,8 @@ export type AvatarPayload =
   | { action: "replace"; bytes: Uint8Array; mime: string };
 
 export type RegisterValues = {
-  account: string;
+  email: string;
+  code: string;
   password: string;
   name: string;
   birthday: string;
@@ -38,16 +45,23 @@ function asString(value: unknown) {
 export function validateRegisterInput(
   input: Record<string, unknown>
 ): Success<RegisterValues> | Failure {
-  const account = asString(input.account).trim();
+  const email = normalizeEmail(asString(input.email));
+  const code = asString(input.code).trim();
   const password = asString(input.password);
   const name = asString(input.name).trim();
   const birthday = asString(input.birthday).trim();
   const fields: ApiFieldErrors = {};
 
-  if (!account) {
-    fields.account = "请填写登录账号";
-  } else if (!/^[A-Za-z0-9_]{3,24}$/.test(account)) {
-    fields.account = "账号需为 3–24 位字母、数字或下划线";
+  if (!email) {
+    fields.email = "请填写邮箱";
+  } else if (!isValidEmail(email)) {
+    fields.email = "请输入有效的邮箱地址";
+  } else if (isDisposableEmail(email)) {
+    fields.email = "暂不支持一次性邮箱，请使用常用邮箱";
+  }
+
+  if (!/^\d{6}$/.test(code)) {
+    fields.code = "请输入 6 位邮箱验证码";
   }
 
   if (password.length < 8) {
@@ -60,6 +74,9 @@ export function validateRegisterInput(
     fields.name = "请填写一个称呼";
   } else if (characterCount(name) > 24) {
     fields.name = "称呼最多 24 个字符";
+  } else {
+    const sensitive = sensitiveWarning(name);
+    if (sensitive) fields.name = sensitive.message;
   }
 
   if (!birthday) {
@@ -71,7 +88,7 @@ export function validateRegisterInput(
   if (Object.keys(fields).length > 0) return { ok: false, fields };
   return {
     ok: true,
-    value: { account, password, name, birthday }
+    value: { email, code, password, name, birthday }
   };
 }
 
@@ -152,10 +169,16 @@ export function validateProfileInput(
     fields.name = "请填写一个称呼";
   } else if (characterCount(name) > 24) {
     fields.name = "称呼最多 24 个字符";
+  } else {
+    const sensitive = sensitiveWarning(name);
+    if (sensitive) fields.name = sensitive.message;
   }
 
   if (characterCount(bio) > 160) {
     fields.bio = "简介最多 160 个字符";
+  } else if (bio) {
+    const sensitive = sensitiveWarning(bio);
+    if (sensitive) fields.bio = sensitive.message;
   }
 
   if (!birthday) {

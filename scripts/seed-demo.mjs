@@ -91,6 +91,8 @@ const users = [
   {
     id: "demo-xiaoman",
     account: "xiaoman",
+    email: "xiaoman@example.com",
+    uid: "XIAOMAN",
     name: "林小满",
     bio: "爱把日子过成一首很慢的诗。",
     birthday: toIso(today.monthDay, 1996),
@@ -101,6 +103,8 @@ const users = [
   {
     id: "demo-yuan",
     account: "yuan",
+    email: "yuan@example.com",
+    uid: "YUAN2026",
     name: "周予安",
     bio: "咖啡、旧唱片，还有一点点晚风。",
     birthday: toIso(today.monthDay, 1993),
@@ -111,6 +115,8 @@ const users = [
   {
     id: "demo-acheng",
     account: "acheng",
+    email: "acheng@example.com",
+    uid: "ACHENG",
     name: "阿澄",
     bio: "",
     birthday: toIso(today.monthDay, 1998),
@@ -121,6 +127,8 @@ const users = [
   {
     id: "demo-zhiyao",
     account: "zhiyao",
+    email: "zhiyao@example.com",
+    uid: "ZHIYAO",
     name: "宋知遥",
     bio: "在很远的地方，认真看云。",
     birthday: toIso("11-08", 1995),
@@ -131,6 +139,8 @@ const users = [
   {
     id: "demo-nan",
     account: "nan",
+    email: "nan@example.com",
+    uid: "NANYU",
     name: "南屿",
     bio: "今天也要好好吃饭。",
     birthday: toIso("03-14", 1997),
@@ -152,9 +162,17 @@ await db.batch(
       is_anonymous INTEGER NOT NULL DEFAULT 0 CHECK (is_anonymous IN (0, 1)),
       avatar BLOB,
       avatar_mime TEXT,
+      email TEXT,
+      email_verified_at TEXT,
+      uid TEXT,
+      uid_change_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+      ON users (email) WHERE email IS NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid_unique
+      ON users (uid) WHERE uid IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_users_birthday ON users (birthday)`,
     `CREATE INDEX IF NOT EXISTS idx_users_birthday_md ON users (substr(birthday, 6, 5))`,
     `CREATE INDEX IF NOT EXISTS idx_users_created ON users (created_at)`,
@@ -227,8 +245,10 @@ for (const user of users) {
 
   await db.execute({
     sql: `INSERT INTO users
-      (id, account, password_hash, name, bio, birthday, is_anonymous, avatar, avatar_mime, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, account, password_hash, name, bio, birthday, is_anonymous, avatar,
+       avatar_mime, email, email_verified_at, uid, uid_change_count,
+       created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         account = excluded.account,
         password_hash = excluded.password_hash,
@@ -238,6 +258,10 @@ for (const user of users) {
         is_anonymous = excluded.is_anonymous,
         avatar = excluded.avatar,
         avatar_mime = excluded.avatar_mime,
+        email = excluded.email,
+        email_verified_at = excluded.email_verified_at,
+        uid = excluded.uid,
+        uid_change_count = excluded.uid_change_count,
         updated_at = excluded.updated_at`,
     args: [
       user.id,
@@ -249,6 +273,9 @@ for (const user of users) {
       user.isAnonymous,
       avatar,
       avatarMime,
+      user.email,
+      now,
+      user.uid,
       now,
       now
     ]
@@ -340,7 +367,8 @@ for (const blessing of blessingRows) {
 const total = await db.execute("SELECT COUNT(*) AS count FROM users");
 console.log(`\nBirtHappy 演示数据已准备好（${Number(total.rows[0].count)} 位用户）。\n`);
 console.log("今日生日：林小满、周予安、阿澄（阿澄匿名、无头像、简介为空）");
-console.log("演示账号：xiaoman / yuan / acheng / zhiyao / nan");
+console.log("演示邮箱：xiaoman@example.com / yuan@example.com / acheng@example.com / zhiyao@example.com / nan@example.com");
+console.log("演示 UID：XIAOMAN / YUAN2026 / ACHENG / ZHIYAO / NANYU");
 console.log("统一密码：birthhappy123");
 console.log("林小满有 4 份历史祝福，其中 2 份待回应，可体验切蛋糕。\n");
 console.log(`数据库：${url}\n`);

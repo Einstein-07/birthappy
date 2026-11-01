@@ -2,15 +2,14 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { cache } from "react";
-import { getUserById, getUserByAccount } from "@/lib/repository";
+import { getUserById, getUserForLogin } from "@/lib/repository";
+import { getAuthSecretBytes } from "@/lib/secrets";
 import type { User } from "@/lib/types";
 
 const SESSION_COOKIE = "bh_session";
 const SESSION_DAYS = 30;
 const SESSION_ISSUER = "birthappy";
 const SESSION_AUDIENCE = "birthappy-web";
-const DEVELOPMENT_SECRET =
-  "birthappy-local-development-secret-do-not-use-in-production";
 
 export type SessionCookieOptions = {
   name: string;
@@ -23,17 +22,7 @@ export type SessionCookieOptions = {
 };
 
 function getSessionKey() {
-  const configured = process.env.AUTH_SECRET?.trim();
-  if (process.env.NODE_ENV === "production") {
-    if (!configured || configured.length < 32) {
-      throw new Error(
-        "缺少可用的 AUTH_SECRET。请在部署环境设置至少 32 个字符的随机字符串。"
-      );
-    }
-    return new TextEncoder().encode(configured);
-  }
-
-  return new TextEncoder().encode(configured || DEVELOPMENT_SECRET);
+  return getAuthSecretBytes();
 }
 
 export async function hashPassword(password: string) {
@@ -45,16 +34,19 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function authenticate(
-  account: string,
+  identifier: string,
   password: string
-): Promise<User | null> {
-  const user = await getUserByAccount(account);
+): Promise<{ user: User; needsEmailBinding: boolean } | null> {
+  const user = await getUserForLogin(identifier);
   if (!user) return null;
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) return null;
 
   const { passwordHash: _passwordHash, ...publicUser } = user;
-  return publicUser;
+  return {
+    user: publicUser,
+    needsEmailBinding: !publicUser.email
+  };
 }
 
 export async function createSessionToken(userId: string) {
