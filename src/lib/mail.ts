@@ -1,5 +1,14 @@
+import { resolve4 } from "node:dns/promises";
+import { setDefaultResultOrder } from "node:dns";
 import nodemailer, { type Transporter } from "nodemailer";
 import { MAIL_SENDER_ADDRESS } from "@/lib/mail-constants";
+
+// 无服务器运行时有时没有可用的 IPv6 出口；优先使用 IPv4，避免连接悬挂。
+try {
+  setDefaultResultOrder("ipv4first");
+} catch {
+  // 旧版本 Node 忽略即可。
+}
 
 export type VerificationPurpose = "register" | "bind" | "delete";
 
@@ -14,19 +23,35 @@ const globalForMail = globalThis as unknown as {
   __birthappyMailer?: Transporter;
 };
 
-function getMailer() {
+async function getMailer() {
   const user = process.env.MAIL_USER?.trim();
   const pass = process.env.MAIL_PASS?.trim();
   if (!user || !pass) throw new MailConfigurationError();
 
   if (!globalForMail.__birthappyMailer) {
+    const configuredHost = process.env.MAIL_HOST?.trim() || "smtp.qq.com";
+    let connectHost = configuredHost;
+    let servername: string | undefined;
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(configuredHost)) {
+      try {
+        const addresses = await resolve4(configuredHost);
+        if (addresses[0]) {
+          connectHost = addresses[0];
+          servername = configuredHost;
+        }
+      } catch {
+        // 解析失败时退回域名，让节点自己处理。
+      }
+    }
+
     globalForMail.__birthappyMailer = nodemailer.createTransport({
-      host: process.env.MAIL_HOST?.trim() || "smtp.qq.com",
+      host: connectHost,
       port: Number(process.env.MAIL_PORT || 465),
       secure: process.env.MAIL_SECURE !== "false",
       auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
+      ...(servername ? { tls: { servername } } : {}),
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
       socketTimeout: 15000
     });
   }
@@ -49,7 +74,7 @@ export async function sendVerificationEmail(
   code: string,
   purpose: VerificationPurpose
 ) {
-  const mailer = getMailer();
+  const mailer = await getMailer();
   const user = process.env.MAIL_USER?.trim() || MAIL_SENDER_ADDRESS;
   const label = purposeLabel(purpose);
   const fromName = process.env.MAIL_FROM_NAME?.trim() || "BirtHappy";
