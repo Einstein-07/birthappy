@@ -121,13 +121,15 @@ export function EmailCodeField({
       />
       <p className="mail-security-note">
         <SparkIcon aria-hidden="true" />
-        验证邮件由 BirtHappy 通过 Resend 发出
-        {mailSender ? (
-          <>
-            （发件地址：<strong>{mailSender}</strong>）
-          </>
-        ) : null}
-        ，可能被判定为垃圾邮件，请同时检查垃圾箱或广告邮件。请勿向任何人提供验证码。
+        <span>
+          验证邮件由 BirtHappy 通过 Resend 发出
+          {mailSender ? (
+            <>
+              （发件地址：<strong>{mailSender}</strong>）
+            </>
+          ) : null}
+          ，可能被判定为垃圾邮件，请同时检查垃圾箱或广告邮件。请勿向任何人提供验证码。
+        </span>
       </p>
       {message ? (
         <p className="email-code-status is-success" role="status">

@@ -4,6 +4,8 @@
 
 BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网站。没有评论区，没有排行榜，只有一张今日生日桌、一块蛋糕，以及一份被记住的心意。
 
+生产地址：<https://birthappy.cn>
+
 作者：绛河
 
 ![BirtHappy 首页](docs/screenshots/home-desktop.jpg)
@@ -32,10 +34,14 @@ BirtHappy 是一个只展示「今天过生日的人」的轻量生日祝福网�
 - **零配置本地开发**：默认使用本地 SQLite 文件，生产切换 Turso 即可。
 - **自动建表**：首次请求幂等初始化数据库，无需手工执行 SQL。
 
+![注册页](docs/screenshots/register-desktop.jpg)
+
 ![「我」页](docs/screenshots/me-desktop.jpg)
 
 <p>
-  <img src="docs/screenshots/home-mobile.jpg" alt="移动端首页" width="330" />
+  <img src="docs/screenshots/home-mobile.jpg" alt="移动端首页" width="250" />
+  <img src="docs/screenshots/me-mobile.jpg" alt="移动端「我」页" width="250" />
+  <img src="docs/screenshots/register-mobile.jpg" alt="移动端注册页" width="250" />
 </p>
 
 ## 技术栈
@@ -91,11 +97,11 @@ npm run seed
 | `AUTH_SECRET` | 生产必填 | 至少 32 位随机字符串，用于签名登录 Cookie、验证码和表单令牌；缺失时相关逻辑拒绝工作 |
 | `AUTH_COOKIE_SECURE` | 否 | 仅供本机用 HTTP 跑生产构建时设为 `false`；线上不要设置 |
 | `RESEND_API_KEY` | 生产必填 | Resend API Key，只在服务端环境变量中使用 |
-| `RESEND_FROM` | 生产强烈建议 | 已在 Resend 验证域名的发件地址，如 `BirtHappy <noreply@your-domain.com>` |
+| `RESEND_FROM` | 生产强烈建议 | 已在 Resend 验证域名的发件地址，当前为 `BirtHappy <noreply@birthappy.cn>` |
 | `RESEND_REPLY_TO` | 否 | 可选回复地址 |
 | `BACKUP_TOKEN` | 可选 | 生产备份下载接口令牌，至少 32 位；不配置时接口返回 404 |
 
-Resend 需要在 Dashboard 中验证域名，并把 `RESEND_FROM` 设置为该域名下的地址；否则免费测试地址 `onboarding@resend.dev` 通常只能发往 Resend 账户自己的邮箱。Resend 免费额度与每日 100 人上限匹配，适合当前规模。
+Resend 需要在 Dashboard 中验证域名，并把 `RESEND_FROM` 设置为该域名下的地址。BirtHappy 使用 `birthappy.cn` 作为已验证发件域名；没有验证域名时，测试地址通常只能发往 Resend 账户自己的邮箱。Resend 免费额度与每日 100 人上限匹配，适合当前规模。
 
 ## 常用命令
 

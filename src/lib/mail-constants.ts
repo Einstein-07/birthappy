@@ -1,1 +1,1 @@
-export const MAIL_SENDER_FALLBACK = "BirtHappy <onboarding@resend.dev>";
+export const MAIL_SENDER_FALLBACK = "BirtHappy <noreply@birthappy.cn>";

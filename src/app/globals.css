@@ -3539,9 +3539,15 @@ h3 {
   color: var(--accent);
 }
 
+.mail-security-note > span {
+  flex: 1;
+  min-width: 0;
+}
+
 .mail-security-note strong {
   color: var(--ink-soft);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .email-code-status {

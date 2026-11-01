@@ -11,7 +11,7 @@ Netlify 的 Next.js Runtime 基于 OpenNext，官方支持 App Router、SSR、Ro
 - [Next.js on Netlify 官方文档](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/)
 - [Netlify 定价](https://www.netlify.com/pricing/)
 
-> 部署完成后地址形如 `https://birthappy.netlify.app`。`*.netlify.app` 在国内的可达性通常优于 `*.vercel.app`，但仍可能因地区网络变化。
+> 当前生产地址为 <https://birthappy.cn>，`https://birthappy.netlify.app` 仍可用。自定义域名需要在 Netlify 绑定并完成 HTTPS 证书签发。
 
 ## 1. 前置准备
 
@@ -44,7 +44,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 3. 在 **Domains** 确认域名状态为已验证。
 4. 将 `RESEND_FROM` 设置为该域名下的地址，例如：
    ```text
-   BirtHappy <noreply@your-domain.com>
+   BirtHappy <noreply@birthappy.cn>
    ```
 5. 未验证域名时，Resend 只允许使用 `onboarding@resend.dev` 测试地址，通常只能发到 Resend 账户自己的邮箱，无法给普通用户发验证码。
 
@@ -183,6 +183,8 @@ birthappy-einstein
 ```text
 https://birthappy.netlify.app
 ```
+
+当前生产同时绑定自定义域名 <https://birthappy.cn>，DNS 在阿里云管理；Netlify 子域名保留为备用入口。
 
 ## 7. 上线验收
 
