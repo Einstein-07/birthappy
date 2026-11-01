@@ -135,7 +135,23 @@ export async function POST(request: Request) {
         return jsonError("邮件服务尚未配置，请联系管理员", 503);
       }
       console.error("send verification email failed", error);
-      return jsonError("验证码邮件发送失败，请稍后重试", 502);
+      const mailErrorCode =
+        error instanceof Error &&
+        "code" in error &&
+        typeof (error as Error & { code?: unknown }).code === "string"
+          ? (error as Error & { code: string }).code
+          : "UNKNOWN";
+      return NextResponse.json(
+        {
+          error: "验证码邮件发送失败，请稍后重试",
+          code: "MAIL_SEND_FAILED",
+          mailErrorCode
+        },
+        {
+          status: 502,
+          headers: { "Cache-Control": "no-store" }
+        }
+      );
     }
 
     return NextResponse.json(
