@@ -101,10 +101,8 @@ export async function sendVerificationEmail(
     console.error("Resend send failed", response.status, detail.slice(0, 500));
     const sendError = new Error("Resend 拒绝了发信请求") as Error & {
       code: string;
-      detail?: string;
     };
     sendError.code = `RESEND_${response.status}`;
-    sendError.detail = detail.slice(0, 500);
     throw sendError;
   }
 

@@ -148,12 +148,7 @@ export async function POST(request: Request) {
             status === 429
               ? "验证码发送额度暂时用完，请稍后再试"
               : "验证码邮件发送失败，请稍后重试",
-          code: "MAIL_SEND_FAILED",
-          mailErrorCode,
-          mailDetail:
-            error instanceof Error && "detail" in error
-              ? (error as Error & { detail?: string }).detail
-              : undefined
+          code: status === 429 ? "MAIL_RATE_LIMITED" : "MAIL_SEND_FAILED"
         },
         {
           status,
